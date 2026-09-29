@@ -48,7 +48,6 @@ const SECRET_REF = {
 
 const baseConfig = {
   companyId: "33333333-3333-4333-8333-333333333333",
-  defaultAgentId: "44444444-4444-4444-8444-444444444444",
   defaultChannelId: "C01ABC2DEF3",
 };
 
@@ -91,17 +90,15 @@ describe("instanceConfigSchema vs the host settings form", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("accepts an additional Slack app mapped to its own Paperclip agent", () => {
+  it("accepts an additional Slack App without client-specific routing fields", () => {
     const result = validateInstanceConfig({
       ...baseConfig,
       slackBotTokenRef: SECRET_REF,
       slackAppTokenRef: SECRET_REF,
       additionalBots: [
         {
-          key: "reflection-coach",
           slackBotTokenRef: SECRET_REF,
           slackAppTokenRef: SECRET_REF,
-          agentId: "55555555-5555-4555-8555-555555555555",
           allowedSlackUserIds: ["U01ABC2DEF3"],
         },
       ],
@@ -110,22 +107,19 @@ describe("instanceConfigSchema vs the host settings form", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("rejects an unsafe additional-bot key", () => {
+  it("rejects an additional Slack App missing a token reference", () => {
     const result = validateInstanceConfig({
       ...baseConfig,
       slackBotTokenRef: SECRET_REF,
       slackAppTokenRef: SECRET_REF,
       additionalBots: [
         {
-          key: "Reflection Coach",
           slackBotTokenRef: SECRET_REF,
-          slackAppTokenRef: SECRET_REF,
-          agentId: "55555555-5555-4555-8555-555555555555",
         },
       ],
     });
     expect(result.valid).toBe(false);
-    expect(result.errors.some((error) => error.field.includes("/additionalBots/0/key"))).toBe(true);
+    expect(result.errors.some((error) => error.field.includes("/additionalBots/0"))).toBe(true);
   });
 
   it("accepts a fully populated config with every optional field set", () => {

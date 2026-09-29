@@ -6,7 +6,7 @@ import { FakeGateway, makeCtx, TEST_CONFIG } from "./helpers.js";
 describe("opt-in mentioned thread continuation", () => {
   function setup(enabled = true) {
     const bundle = makeCtx();
-    const chat = createChat({ ctx: bundle.ctx, gateway: new FakeGateway(),
+    const chat = createChat({ ctx: bundle.ctx, gateway: new FakeGateway(), agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, continueMentionedThreads: enabled }), updateIntervalMs: 0 });
     return { ...bundle, chat };
   }

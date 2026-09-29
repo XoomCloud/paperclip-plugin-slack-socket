@@ -83,6 +83,8 @@ export interface ChatDeps {
   heartbeatIntervalMs?: number;
   /** Prefixes persisted session keys so two Slack apps can share a channel safely. */
   sessionKeyPrefix?: string;
+  /** Paperclip employee bound to this Slack app by the dynamic registry. */
+  agentId: string;
 }
 
 export interface Chat {
@@ -449,6 +451,7 @@ export function createChat(deps: ChatDeps): Chat {
     channel: string,
     scope: SessionScope,
   ): Promise<SessionEntry> {
+    const targetAgentId = deps.agentId;
     const key = scope.key;
     const inFlight = inFlightSessions.get(key);
     // A caller that joins an in-flight creation gets the same entry the
@@ -476,7 +479,7 @@ export function createChat(deps: ChatDeps): Chat {
       // entries have no identity to compare and retain the pre-existing reuse
       // behavior; operators clear those once during migration.
       const agentChanged =
-        existing !== null && existing.agentId !== undefined && existing.agentId !== cfg.defaultAgentId;
+        existing !== null && existing.agentId !== undefined && existing.agentId !== targetAgentId;
       if (existing && !expired && !agentChanged) {
         // Spread preserves seedPending: a session created but not yet
         // seeded (a failed first turn) stays pending until a turn delivers.
@@ -500,12 +503,12 @@ export function createChat(deps: ChatDeps): Chat {
           .write(agentChanged ? "slack.sessions.agent_changed" : "slack.sessions.expired_at_reuse", 1)
           .catch(() => {});
       }
-      const session = await ctx.agents.sessions.create(cfg.defaultAgentId, cfg.companyId, {
+      const session = await ctx.agents.sessions.create(targetAgentId, cfg.companyId, {
         reason: "slack-thread",
       });
       const entry: SessionEntry = {
         sessionId: session.sessionId,
-        agentId: cfg.defaultAgentId,
+        agentId: targetAgentId,
         channel,
         // NOT a key round-trip. `scope.replyThreadTs` mirrors wherever the
         // triggering message actually landed — for a channel-scoped DM
@@ -1446,10 +1449,11 @@ export function createChat(deps: ChatDeps): Chat {
       // Access checks remain in the worker, before this handler. Only an
       // existing session for this bot/agent opts a thread into follow-ups.
       const cfg = await getConfig();
+      const targetAgentId = deps.agentId;
       if (!cfg.continueMentionedThreads) return;
-      const scope = resolveSessionScope(msg, cfg.dmSessionMode);
+      const scope = sessionScopeFor(msg, cfg.dmSessionMode);
       const entry = (await ctx.state.get(stateScope(scope.key))) as SessionEntry | null;
-      if (!entry || entry.agentId !== cfg.defaultAgentId) return;
+      if (!entry || entry.agentId !== targetAgentId) return;
       const lastActivity = Date.parse(entry.lastActivityAt);
       if (!Number.isFinite(lastActivity) || Date.now() - lastActivity >= cfg.sessionIdleHours * 3_600_000) return;
       if (await tryHandleReset(msg)) return;

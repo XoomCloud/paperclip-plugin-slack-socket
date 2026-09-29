@@ -8,15 +8,7 @@
     "bot_user": {
       "display_name": "XoomAI-Employee",
       "always_online": true
-    },
-    "slash_commands": [
-      {
-        "command": "/paperclip",
-        "description": "Paperclip commands",
-        "usage_hint": "issue <title> | help",
-        "should_escape": false
-      }
-    ]
+    }
   },
   "oauth_config": {
     "scopes": {
@@ -40,12 +32,11 @@
         "app_mention",
         "message.channels",
         "message.groups",
-        "message.im",
-        "reaction_added"
+        "message.im"
       ]
     },
     "interactivity": {
-      "is_enabled": true
+      "is_enabled": false
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": true,

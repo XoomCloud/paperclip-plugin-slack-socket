@@ -13,6 +13,7 @@ describe("manifest", () => {
       [
         "issues.create", "issue.comments.create", "issues.wakeup",
         "agent.sessions.create", "agent.sessions.send", "agent.sessions.close",
+        "agents.read",
         "agent.tools.register", "http.outbound", "events.subscribe",
         "plugin.state.read", "plugin.state.write", "secrets.read-ref", "instance.settings.register",
         "activity.log.write", "metrics.write", "jobs.schedule", "api.routes.register",
@@ -20,8 +21,8 @@ describe("manifest", () => {
     );
   });
 
-  it("declares the cleanup job and both agent tools", () => {
-    expect(manifest.jobs?.map((j) => j.jobKey)).toEqual([JOB_KEYS.cleanup]);
+  it("declares cleanup and registry-refresh jobs plus both agent tools", () => {
+    expect(manifest.jobs?.map((j) => j.jobKey)).toEqual([JOB_KEYS.cleanup, JOB_KEYS.agentRegistryRefresh]);
     expect(manifest.tools?.map((t) => t.name)).toEqual([TOOL_NAMES.askHuman, TOOL_NAMES.postMessage]);
   });
 
@@ -39,10 +40,10 @@ describe("manifest", () => {
     ]);
   });
 
-  it("requires tokens, company, agent, and default channel in config", () => {
+  it("requires tokens, company, and default channel without an agent ID", () => {
     const schema = manifest.instanceConfigSchema as { required?: string[] };
     expect(schema.required).toEqual([
-      "slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultAgentId", "defaultChannelId",
+      "slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultChannelId",
     ]);
   });
 

@@ -14,10 +14,10 @@ const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
-  displayName: "Slack (Socket Mode)",
+  displayName: "XoomAI Slack Employee Gateway",
   description:
     "Connect Slack over Socket Mode — no public URL required. Chat with a Paperclip agent in DMs and mentions, get configurable notifications, decide approvals with buttons, let agents ask humans questions, and create issues with /paperclip.",
-  author: "cvh",
+  author: "XoomCloud",
   categories: ["connector", "automation"],
   capabilities: [
     "issues.create",
@@ -26,6 +26,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "agent.sessions.create",
     "agent.sessions.send",
     "agent.sessions.close",
+    "agents.read",
     "agent.tools.register",
     "http.outbound",
     "events.subscribe",
@@ -72,27 +73,15 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Paperclip company UUID used for sessions, issues, and approvals.",
         default: DEFAULT_CONFIG.companyId,
       },
-      defaultAgentId: {
-        type: "string",
-        title: "Default Agent ID",
-        description: "Agent that handles DM and @mention conversations.",
-        default: DEFAULT_CONFIG.defaultAgentId,
-      },
       additionalBots: {
         type: "array",
-        title: "Additional Slack bots",
+        title: "Additional employee Slack Apps",
         description:
-          "Optional additional Slack apps. Each app is isolated and talks directly to its mapped Paperclip agent. The primary bot above remains the notification and outbound-tool bot.",
+          "Additional Slack Apps. Paperclip employee bindings are discovered automatically from each bot's Slack username; do not enter agent IDs or employee names here.",
         default: DEFAULT_CONFIG.additionalBots,
         items: {
           type: "object",
           properties: {
-            key: {
-              type: "string",
-              pattern: "^[a-z0-9][a-z0-9_-]*$",
-              title: "Bot key",
-              description: "Stable unique name such as ceo, reflection-coach, or summarizer.",
-            },
             slackBotTokenRef: {
               type: ["string", "object"],
               format: "secret-ref",
@@ -103,10 +92,6 @@ const manifest: PaperclipPluginManifestV1 = {
               format: "secret-ref",
               title: "Slack App-Level Token",
             },
-            agentId: {
-              type: "string",
-              title: "Paperclip Agent ID",
-            },
             allowedSlackUserIds: {
               type: "array",
               items: { type: "string" },
@@ -114,7 +99,7 @@ const manifest: PaperclipPluginManifestV1 = {
               description: "Optional per-bot allowlist. Omit to inherit the primary bot allowlist.",
             },
           },
-          required: ["key", "slackBotTokenRef", "slackAppTokenRef", "agentId"],
+          required: ["slackBotTokenRef", "slackAppTokenRef"],
         },
       },
       defaultChannelId: {
@@ -219,7 +204,7 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "boolean",
         title: "Continue mentioned threads without tagging",
         description: "Allow approved users to continue an active channel thread after mentioning this bot. New threads still require a mention. Expired or reset conversations require a new mention.",
-        default: false,
+        default: true,
       },
       dmSessionMode: {
         type: "string",
@@ -289,7 +274,7 @@ const manifest: PaperclipPluginManifestV1 = {
         default: DEFAULT_CONFIG.agentDmAnyUser,
       },
     },
-    required: ["slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultAgentId", "defaultChannelId"],
+    required: ["slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultChannelId"],
   },
   jobs: [
     {
@@ -297,6 +282,12 @@ const manifest: PaperclipPluginManifestV1 = {
       displayName: "Cleanup idle sessions and expired questions",
       description: "Closes agent sessions idle beyond the configured TTL and expires unanswered ask-human questions.",
       schedule: "*/15 * * * *",
+    },
+    {
+      jobKey: JOB_KEYS.agentRegistryRefresh,
+      displayName: "Refresh Paperclip employee routing registry",
+      description: "Reconciles active Paperclip employees with connected Slack bot identities.",
+      schedule: "*/5 * * * *",
     },
   ],
   apiRoutes: [

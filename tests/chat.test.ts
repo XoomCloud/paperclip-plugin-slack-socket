@@ -36,6 +36,7 @@ function setup(configOverrides = {}, depsOverrides: Record<string, unknown> = {}
   const chat = createChat({
     ctx: bundle.ctx,
     gateway,
+    agentId: "agent-1",
     getConfig: async () => ({ ...TEST_CONFIG, ...configOverrides }),
     updateIntervalMs: 0,
     ...depsOverrides,
@@ -207,6 +208,7 @@ describe("chat", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: () => Promise.reject(new Error("config store down")),
       updateIntervalMs: 0,
     });
@@ -228,6 +230,7 @@ describe("chat", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, chatPromptPreamble: 123 as unknown as string }),
       updateIntervalMs: 0,
     });
@@ -248,6 +251,7 @@ describe("chat", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       // Opt into streaming: this test is exercising the chunk-driven
       // debounce timer, which only schedules updates when enabled.
       getConfig: async () => ({ ...TEST_CONFIG, streamPartialReplies: true }),
@@ -645,7 +649,7 @@ describe("chat", () => {
     });
 
     it("starts a fresh session when the bot is remapped to a different agent", async () => {
-      const { ctx, chat, stateStore } = setup({ dmSessionMode: "thread", defaultAgentId: "agent-2" });
+      const { ctx, chat, stateStore } = setup({ dmSessionMode: "thread" }, { agentId: "agent-2" });
       stateStore.set(STATE_KEYS.session("D1", "100.1"), {
         sessionId: "sess-agent-1", agentId: "agent-1", channel: "D1", threadTs: "100.1",
         scope: "thread", lastActivityAt: hoursAgo(1),
@@ -1041,6 +1045,7 @@ describe("turn watchdog", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, ...configOverrides }),
       updateIntervalMs: 0,
       // Milliseconds, not minutes: only the timer duration is injected, so
@@ -1110,6 +1115,7 @@ describe("turn watchdog", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, turnTimeoutMinutes: 0 }),
       updateIntervalMs: 0,
     });
@@ -1316,6 +1322,7 @@ describe("wake reason", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG }),
       updateIntervalMs: 0,
     });
@@ -1569,6 +1576,7 @@ describe("follow-up posts in a top-level DM reply", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG }),
       updateIntervalMs: 0,
       turnTimeoutMs: 5,
@@ -3061,6 +3069,7 @@ describe("thread delta hydration", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, ...configOverrides }),
       updateIntervalMs: 0,
       ...depsOverrides,
@@ -3219,6 +3228,7 @@ describe("delta hydration hardening (review findings)", () => {
     const chat = createChat({
       ctx: bundle.ctx,
       gateway,
+      agentId: "agent-1",
       getConfig: async () => ({ ...TEST_CONFIG, ...configOverrides }),
       updateIntervalMs: 0,
       ...depsOverrides,

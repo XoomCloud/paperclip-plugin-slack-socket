@@ -1,7 +1,7 @@
 import type { PluginToolDeclaration, ScopeKey } from "@paperclipai/plugin-sdk";
 import type { SlackSocketConfig } from "./types.js";
 
-export const PLUGIN_ID = "cvh.slack-socket";
+export const PLUGIN_ID = "xoomai.slack-socket";
 // The bot scopes slack-app-manifest.json requests — the feature set this
 // plugin assumes a token carries. Compared at connect time against the
 // x-oauth-scopes the token actually has (see BoltGateway.start): a scope
@@ -21,7 +21,7 @@ export const REQUIRED_BOT_SCOPES = [
   "commands",
 ] as const;
 
-export const PLUGIN_VERSION = "0.11.4";
+export const PLUGIN_VERSION = "0.12.0-xoomai.1";
 
 export const ACTION_IDS = {
   approvalApprove: "approval_approve",
@@ -30,6 +30,7 @@ export const ACTION_IDS = {
 
 export const JOB_KEYS = {
   cleanup: "cleanup",
+  agentRegistryRefresh: "agent-registry-refresh",
 } as const;
 
 export const API_ROUTE_KEYS = {
@@ -186,7 +187,6 @@ export const DEFAULT_CONFIG: SlackSocketConfig = {
   slackBotTokenRef: "",
   slackAppTokenRef: "",
   companyId: "",
-  defaultAgentId: "",
   additionalBots: [],
   defaultChannelId: "",
   notifyOnIssueCreated: true,
@@ -202,7 +202,7 @@ export const DEFAULT_CONFIG: SlackSocketConfig = {
   turnTimeoutMinutes: 10,
   streamPartialReplies: false,
   chatPromptPreamble: DEFAULT_CHAT_PROMPT_PREAMBLE,
-  continueMentionedThreads: false,
+  continueMentionedThreads: true,
   // Default chosen because today's behavior is the defect: nothing depends
   // on the bot forgetting the previous line of a DM.
   dmSessionMode: "channel",
