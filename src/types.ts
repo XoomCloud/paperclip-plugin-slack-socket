@@ -17,12 +17,20 @@ export type SecretRef = string | EnvSecretRefBinding;
 // does not touch them.
 export type DmSessionMode = "channel" | "thread";
 
+/** A second Slack app. Its Paperclip employee binding is discovered at runtime. */
+export interface AdditionalSlackBotConfig {
+  slackBotTokenRef: SecretRef;
+  slackAppTokenRef: SecretRef;
+  /** Inherits the primary allowlist when omitted. */
+  allowedSlackUserIds?: string[];
+}
+
 export interface SlackSocketConfig {
   slackBotTokenRef: SecretRef;
   slackAppTokenRef: SecretRef;
   paperclipApiKeyRef: SecretRef;
   companyId: string;
-  defaultAgentId: string;
+  additionalBots: AdditionalSlackBotConfig[];
   defaultChannelId: string;
   notifyOnIssueCreated: boolean;
   notifyOnIssueDone: boolean;
@@ -37,6 +45,8 @@ export interface SlackSocketConfig {
   streamPartialReplies: boolean;
   chatPromptPreamble: string;
   dmSessionMode: DmSessionMode;
+  /** Continue an existing channel thread without requiring another mention. */
+  continueMentionedThreads?: boolean;
   /**
    * Seed a newly created session with the Slack thread it was mentioned in
    * (see buildSeedBlock in chat.ts). Default true: without it the agent
@@ -65,6 +75,8 @@ export interface SlackSocketConfig {
 
 export interface SessionEntry {
   sessionId: string;
+  /** Agent this conversation is bound to. A missing value is legacy state. */
+  agentId?: string;
   channel: string;
   /**
    * The thread this session belongs to, or CHANNEL_SESSION_TS when `scope`
@@ -175,6 +187,15 @@ export interface OutboundMessage {
   threadTs?: string;
 }
 
+/** Stable Slack identity returned by auth.test for one installed app/bot. */
+export interface SlackBotIdentity {
+  userId: string;
+  botId?: string;
+  username: string;
+  teamId?: string;
+  teamName?: string;
+}
+
 /**
  * One message read back from a Slack thread. `isBot` is true only for
  * messages this app itself posted — including an alert another agent run
@@ -202,6 +223,12 @@ export interface SlackGateway {
   stop(): Promise<void>;
   isConnected(): boolean;
   botUserId(): string | undefined;
+  /**
+   * Resolve the bot identity without opening Socket Mode. Optional only for
+   * backwards-compatible test gateways; the production Bolt gateway always
+   * implements it.
+   */
+  identity?(): Promise<SlackBotIdentity>;
   /**
    * Independent liveness signal: an `auth.test` round-trip, false on any
    * failure. The worker's socket watchdog uses this so recovery never rests

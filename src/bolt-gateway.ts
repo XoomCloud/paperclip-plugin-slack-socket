@@ -8,6 +8,7 @@ import type {
   InboundMessage,
   InboundReaction,
   OutboundMessage,
+  SlackBotIdentity,
   SlackGateway,
   ThreadMessage,
 } from "./types.js";
@@ -58,6 +59,7 @@ export class BoltGateway implements SlackGateway {
   private readonly logger: GatewayLogger;
   private connected = false;
   private botId: string | undefined;
+  private botIdentity: SlackBotIdentity | undefined;
   private tokenDiagnostics: GatewayTokenDiagnostics = {
     looksLikeUserToken: false,
     missingScopes: [],
@@ -203,18 +205,31 @@ export class BoltGateway implements SlackGateway {
     });
   }
 
-  async start(): Promise<void> {
-    // Verify the bot token (and capture the bot's user id) before opening
-    // the socket at all. auth.test is a plain HTTP call against
-    // `this.app.client`, which doesn't require the socket to be started.
-    // Doing this first means a bad token fails fast with no socket to unwind.
+  async identity(): Promise<SlackBotIdentity> {
+    if (this.botIdentity) return this.botIdentity;
     const auth = await this.app.client.auth.test();
     const authRecord = auth as {
       user_id?: string;
       bot_id?: string;
+      user?: string;
+      team_id?: string;
+      team?: string;
       response_metadata?: { scopes?: string[] };
     };
     this.botId = authRecord.user_id;
+    if (!authRecord.user_id) {
+      throw new Error("Slack auth.test did not return a bot user id");
+    }
+    this.botIdentity = {
+      userId: authRecord.user_id,
+      botId: authRecord.bot_id,
+      // Slack normally supplies `user`. Falling back to the stable user id
+      // remains fail-closed for routing because it will not match an
+      // employee name, while keeping diagnostics available on odd responses.
+      username: authRecord.user ?? authRecord.user_id,
+      teamId: authRecord.team_id,
+      teamName: authRecord.team,
+    };
 
     // Connect-time token diagnostics, from data the auth.test response
     // already carries: a bot token always comes back with a bot_id (a user
@@ -239,6 +254,14 @@ export class BoltGateway implements SlackGateway {
         { missingScopes },
       );
     }
+    return this.botIdentity;
+  }
+
+  async start(): Promise<void> {
+    // Verify the bot token (and capture the bot's user id/name) before
+    // opening the socket. The worker uses that identity to bind this Slack
+    // app to a Paperclip employee before any event can be routed.
+    await this.identity();
 
     const receiver = (this.app as unknown as {
       receiver?: { client?: { on?: (event: string, fn: () => void) => void } };

@@ -1,8 +1,8 @@
 {
-  "name": "paperclip-plugin-slack-socket",
-  "version": "0.11.4",
+  "name": "@xoomcloud/paperclip-plugin-slack-socket",
+  "version": "0.12.0-xoomai.1",
   "type": "module",
-  "description": "Slack Socket Mode plugin for Paperclip: agent chat, notifications, approvals, ask-human tool. No public URL required.",
+  "description": "XoomAI multi-employee Slack Socket Mode gateway for Paperclip with automatic identity routing.",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -18,7 +18,7 @@
     "@paperclipai/plugin-sdk": "*"
   },
   "devDependencies": {
-    "@paperclipai/plugin-sdk": "2026.722.0",
+    "@paperclipai/plugin-sdk": "^2026.831.1",
     "@types/node": "^25.5.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
@@ -27,7 +27,8 @@
   },
   "files": [
     "dist/",
-    "slack-app-manifest.json"
+    "slack-app-manifest.json",
+    "slack-app-manifest.chat-only.json"
   ],
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js",
@@ -35,12 +36,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xCVH/paperclip-plugin-slack-socket.git"
+    "url": "git+https://github.com/XoomCloud/paperclip-plugin-slack-socket.git"
   },
   "bugs": {
-    "url": "https://github.com/0xCVH/paperclip-plugin-slack-socket/issues"
+    "url": "https://github.com/XoomCloud/paperclip-plugin-slack-socket/issues"
   },
-  "homepage": "https://github.com/0xCVH/paperclip-plugin-slack-socket#readme",
-  "author": "0xCVH",
+  "homepage": "https://github.com/XoomCloud/paperclip-plugin-slack-socket#readme",
+  "author": "XoomCloud",
   "license": "MIT"
 }

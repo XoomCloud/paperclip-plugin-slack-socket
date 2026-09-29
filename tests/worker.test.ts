@@ -60,6 +60,9 @@ const { boltGatewayInstances, BoltGatewayMock, alsCapture } = vi.hoisted(() => {
     botUserId(): string {
       return this.botId;
     }
+    async identity(): Promise<{ userId: string; username: string }> {
+      return { userId: this.botId, username: "XoomAI-Agent-1" };
+    }
     async probe(): Promise<boolean> {
       return this.probeResult;
     }
@@ -236,6 +239,178 @@ describe("applyConfig", () => {
     await gateway.emitMessage(msg);
     await gateway.emitMessage(msg);
     expect(ctx.agents.sessions.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards Socket Mode messages through the scoped Paperclip route when enabled", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx } = makeCtx();
+    const gateway = new FakeGateway();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, status: 204 } as Response);
+    try {
+      await applyConfig(ctx, cfg(), () => gateway, { scopedBridge: true });
+      const ts = (Date.now() / 1000).toFixed(6);
+      await gateway.emitMessage({ channel: "D1", channelType: "im", user: "U1", text: "hi", ts });
+
+      expect(ctx.agents.sessions.sendMessage).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe("https://pc.example/api/plugins/xoomai.slack-socket/api/slack-inbound");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        companyId: "co-1",
+        surface: "message",
+        message: { channel: "D1", user: "U1", text: "hi", ts },
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("handles a bridged DM inside the host-provided company scope", async () => {
+    const { default: plugin, applyConfig } = await loadWorker();
+    const { ctx } = makeCtx();
+    await plugin.definition.setup(ctx);
+    await applyConfig(ctx, cfg(), () => new FakeGateway());
+    const ts = (Date.now() / 1000).toFixed(6);
+
+    const response = await plugin.definition.onApiRequest!({
+      routeKey: "slack-inbound",
+      method: "POST",
+      path: "/slack-inbound",
+      params: {},
+      query: {},
+      body: {
+        companyId: "co-1",
+        surface: "message",
+        message: { channel: "D1", channelType: "im", user: "U1", text: "hello", ts },
+      },
+      actor: { actorType: "user", actorId: "local-board", userId: "local-board" },
+      companyId: "co-1",
+      headers: {},
+    });
+
+    expect(response.status).toBe(204);
+    expect(ctx.agents.sessions.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs two Slack apps in one worker with distinct agents, credentials, dedupe, and session state", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx, stateStore } = makeCtx();
+    const gateways: FakeGateway[] = [];
+    const factoryArgs: Array<{ botToken: string; appToken: string }> = [];
+    const config = cfg({
+      additionalBots: [
+        {
+          slackBotTokenRef: "ref-ceo-bot",
+          slackAppTokenRef: "ref-ceo-app",
+          allowedSlackUserIds: ["U1"],
+        },
+      ],
+    });
+
+    const result = await applyConfig(ctx, config, (opts) => {
+      factoryArgs.push(opts);
+      const gateway = new FakeGateway();
+      if (gateways.length === 1) gateway.setIdentity({ userId: "UCEO", username: "XoomAI-CEO" });
+      gateways.push(gateway);
+      return gateway;
+    });
+
+    expect(result.status).toBe("ok");
+    expect(factoryArgs).toEqual([
+      { botToken: "secret-ref-bot", appToken: "secret-ref-app" },
+      { botToken: "secret-ref-ceo-bot", appToken: "secret-ref-ceo-app" },
+    ]);
+    expect(gateways).toHaveLength(2);
+    expect(gateways.every((gateway) => gateway.started)).toBe(true);
+
+    const sharedEvent = {
+      channel: "D1",
+      channelType: "im" as const,
+      user: "U1",
+      text: "hello",
+      ts: (Date.now() / 1000).toFixed(6),
+    };
+    await gateways[0]!.emitMessage(sharedEvent);
+    await gateways[1]!.emitMessage(sharedEvent);
+
+    expect(ctx.agents.sessions.create).toHaveBeenNthCalledWith(1, "agent-1", "co-1", {
+      reason: "slack-thread",
+    });
+    expect(ctx.agents.sessions.create).toHaveBeenNthCalledWith(2, "agent-ceo", "co-1", {
+      reason: "slack-thread",
+    });
+    expect(stateStore.has("bot:UBOT:session:D1:main")).toBe(true);
+    expect(stateStore.has("bot:UCEO:session:D1:main")).toBe(true);
+  });
+
+  it("rejects duplicate Slack bot identities so two token pairs cannot share routing state", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx } = makeCtx();
+    const duplicate = {
+      slackBotTokenRef: "ref-ceo-bot",
+      slackAppTokenRef: "ref-ceo-app",
+    };
+
+    await expect(
+      applyConfig(ctx, cfg({ additionalBots: [duplicate] }), () => new FakeGateway()),
+    ).rejects.toThrow("Slack bot identity UBOT is configured more than once");
+  });
+
+  it("fails closed when a Slack bot has no matching employee and lists the available employees", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx } = makeCtx();
+    const gateway = new FakeGateway();
+    gateway.setIdentity({ userId: "UPAYROLL", username: "XoomAI-Payroll" });
+    await applyConfig(ctx, cfg(), () => gateway);
+
+    await gateway.emitMention({
+      channel: "C1", channelType: "channel", user: "U1", text: "<@UPAYROLL> run payroll",
+      ts: (Date.now() / 1000).toFixed(6),
+    });
+
+    expect(ctx.agents.sessions.create).not.toHaveBeenCalled();
+    expect(gateway.posts.at(-1)?.text).toContain("cannot route this safely");
+    expect(gateway.posts.at(-1)?.text).toContain("Available employees: Agent 1, CEO");
+  });
+
+  it("refreshes after Paperclip agent events so new employees become routable without redeploying", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx, emitEvent } = makeCtx();
+    const gateway = new FakeGateway();
+    gateway.setIdentity({ userId: "UPAYROLL", username: "XoomAI-Payroll" });
+    await applyConfig(ctx, cfg(), () => gateway);
+
+    const existing = await ctx.agents.list({ companyId: "co-1" });
+    (ctx.agents.list as any).mockResolvedValue([
+      ...existing,
+      { ...existing[0], id: "agent-payroll", name: "Payroll", urlKey: "payroll", title: "Payroll" },
+    ]);
+    await emitEvent("agent.created", { companyId: "co-1", entityId: "agent-payroll" });
+
+    await gateway.emitMessage({
+      channel: "D1", channelType: "im", user: "U1", text: "What is due?",
+      ts: (Date.now() / 1000).toFixed(6),
+    });
+    expect(ctx.agents.sessions.create).toHaveBeenCalledWith("agent-payroll", "co-1", {
+      reason: "slack-thread",
+    });
+  });
+
+  it("stops routing an employee after the refreshed registry marks it disabled", async () => {
+    const { applyConfig } = await loadWorker();
+    const { ctx, emitEvent } = makeCtx();
+    const gateway = new FakeGateway();
+    await applyConfig(ctx, cfg(), () => gateway);
+
+    (ctx.agents.list as any).mockResolvedValue([]);
+    await emitEvent("agent.status_changed", { companyId: "co-1", entityId: "agent-1" });
+    await gateway.emitMessage({
+      channel: "D1", channelType: "im", user: "U1", text: "hello",
+      ts: (Date.now() / 1000).toFixed(6),
+    });
+
+    expect(ctx.agents.sessions.create).not.toHaveBeenCalled();
+    expect(gateway.posts.at(-1)?.text).toContain("does not match an active Paperclip employee");
   });
 
   it("does not drop a channel @mention when its message.channels event (same ts) is processed first — dedup keys are namespaced per event type", async () => {
@@ -706,12 +881,21 @@ describe("plugin.definition.onConfigChanged (the real host-facing hook)", () => 
 
     const { default: plugin } = await loadWorker();
     const { ctx } = makeCtx();
+    const secretResolveStores: unknown[] = [];
+    (ctx.secrets.resolve as any).mockImplementation(async (ref: string) => {
+      secretResolveStores.push(als.getStore());
+      return `secret-${ref}`;
+    });
     await plugin.definition.setup(ctx);
 
     await als.run({ invocationId: "configChanged-1" }, async () => {
       await plugin.definition.onConfigChanged!(cfg());
     });
 
+    expect(secretResolveStores).toEqual([
+      { invocationId: "configChanged-1" },
+      { invocationId: "configChanged-1" },
+    ]);
     expect(alsCapture.captured).toBeUndefined();
   });
 
@@ -762,7 +946,6 @@ describe("onValidateConfig", () => {
         "slackBotTokenRef is required",
         "slackAppTokenRef is required",
         "companyId is required",
-        "defaultAgentId is required",
         "defaultChannelId is required",
       ]),
     );
@@ -778,7 +961,6 @@ describe("onValidateConfig", () => {
       slackBotTokenRef: "ref-bot",
       slackAppTokenRef: "ref-app",
       companyId: "co-1",
-      defaultAgentId: "agent-1",
       defaultChannelId: "C-DEFAULT",
     });
     expect(result?.ok).toBe(false);
@@ -796,7 +978,6 @@ describe("onValidateConfig", () => {
       slackBotTokenRef: "ref-bot",
       slackAppTokenRef: "ref-app",
       companyId: "co-validate",
-      defaultAgentId: "agent-1",
       defaultChannelId: "C-DEFAULT",
     });
     expect(result?.ok).toBe(true);

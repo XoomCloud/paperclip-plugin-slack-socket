@@ -48,7 +48,6 @@ const SECRET_REF = {
 
 const baseConfig = {
   companyId: "33333333-3333-4333-8333-333333333333",
-  defaultAgentId: "44444444-4444-4444-8444-444444444444",
   defaultChannelId: "C01ABC2DEF3",
 };
 
@@ -89,6 +88,38 @@ describe("instanceConfigSchema vs the host settings form", () => {
       slackAppTokenRef: SECRET_REF.secretId,
     });
     expect(result.valid).toBe(true);
+  });
+
+  it("accepts an additional Slack App without client-specific routing fields", () => {
+    const result = validateInstanceConfig({
+      ...baseConfig,
+      slackBotTokenRef: SECRET_REF,
+      slackAppTokenRef: SECRET_REF,
+      additionalBots: [
+        {
+          slackBotTokenRef: SECRET_REF,
+          slackAppTokenRef: SECRET_REF,
+          allowedSlackUserIds: ["U01ABC2DEF3"],
+        },
+      ],
+    });
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("rejects an additional Slack App missing a token reference", () => {
+    const result = validateInstanceConfig({
+      ...baseConfig,
+      slackBotTokenRef: SECRET_REF,
+      slackAppTokenRef: SECRET_REF,
+      additionalBots: [
+        {
+          slackBotTokenRef: SECRET_REF,
+        },
+      ],
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.field.includes("/additionalBots/0"))).toBe(true);
   });
 
   it("accepts a fully populated config with every optional field set", () => {

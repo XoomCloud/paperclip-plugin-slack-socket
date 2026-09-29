@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import manifest from "../src/manifest.js";
-import { JOB_KEYS, PLUGIN_VERSION, TOOL_NAMES } from "../src/constants.js";
+import { API_ROUTE_KEYS, JOB_KEYS, PLUGIN_VERSION, TOOL_NAMES } from "../src/constants.js";
 
 describe("manifest", () => {
   it("declares no webhooks (Socket Mode only)", () => {
@@ -13,22 +13,37 @@ describe("manifest", () => {
       [
         "issues.create", "issue.comments.create", "issues.wakeup",
         "agent.sessions.create", "agent.sessions.send", "agent.sessions.close",
+        "agents.read",
         "agent.tools.register", "http.outbound", "events.subscribe",
         "plugin.state.read", "plugin.state.write", "secrets.read-ref", "instance.settings.register",
-        "activity.log.write", "metrics.write", "jobs.schedule",
+        "activity.log.write", "metrics.write", "jobs.schedule", "api.routes.register",
       ].sort(),
     );
   });
 
-  it("declares the cleanup job and both agent tools", () => {
-    expect(manifest.jobs?.map((j) => j.jobKey)).toEqual([JOB_KEYS.cleanup]);
+  it("declares cleanup and registry-refresh jobs plus both agent tools", () => {
+    expect(manifest.jobs?.map((j) => j.jobKey)).toEqual([JOB_KEYS.cleanup, JOB_KEYS.agentRegistryRefresh]);
     expect(manifest.tools?.map((t) => t.name)).toEqual([TOOL_NAMES.askHuman, TOOL_NAMES.postMessage]);
   });
 
-  it("requires tokens, company, agent, and default channel in config", () => {
+  it("declares the company-scoped inbound Slack bridge", () => {
+    expect(manifest.apiRoutes).toEqual([
+      {
+        routeKey: API_ROUTE_KEYS.slackInbound,
+        method: "POST",
+        path: "/slack-inbound",
+        auth: "board",
+        capability: "api.routes.register",
+        checkoutPolicy: "none",
+        companyResolution: { from: "body", key: "companyId" },
+      },
+    ]);
+  });
+
+  it("requires tokens, company, and default channel without an agent ID", () => {
     const schema = manifest.instanceConfigSchema as { required?: string[] };
     expect(schema.required).toEqual([
-      "slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultAgentId", "defaultChannelId",
+      "slackBotTokenRef", "slackAppTokenRef", "companyId", "defaultChannelId",
     ]);
   });
 

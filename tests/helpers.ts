@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { PluginContext } from "@paperclipai/plugin-sdk";
+import type { Agent, PluginContext } from "@paperclipai/plugin-sdk";
 import type {
   InboundAction,
   InboundCommand,
@@ -7,6 +7,7 @@ import type {
   InboundReaction,
   OutboundMessage,
   SlackGateway,
+  SlackBotIdentity,
   SlackSocketConfig,
   ThreadMessage,
 } from "../src/types.js";
@@ -17,7 +18,6 @@ export const TEST_CONFIG: SlackSocketConfig = {
   slackBotTokenRef: "ref-bot",
   slackAppTokenRef: "ref-app",
   companyId: "co-1",
-  defaultAgentId: "agent-1",
   defaultChannelId: "C-DEFAULT",
   paperclipBaseUrl: "https://pc.example",
 };
@@ -64,6 +64,10 @@ export function makeCtx(configOverrides: Partial<SlackSocketConfig> = {}): MockC
       ),
     },
     agents: {
+      list: vi.fn().mockResolvedValue([
+        testAgent("agent-1", "Agent 1"),
+        testAgent("agent-ceo", "CEO"),
+      ]),
       sessions: {
         create: vi.fn().mockResolvedValue({
           sessionId: "sess-1",
@@ -130,6 +134,7 @@ export class FakeGateway implements SlackGateway {
   threadFetches: Array<{ channel: string; threadTs: string; limit: number; oldest?: string }> = [];
 
   private botId: string | undefined = "UBOT";
+  private slackIdentity: SlackBotIdentity = { userId: "UBOT", username: "XoomAI-Agent-1" };
   private tsCounter = 0;
   private messageHandlers: Array<(msg: InboundMessage) => Promise<void>> = [];
   private mentionHandlers: Array<(msg: InboundMessage) => Promise<void>> = [];
@@ -137,8 +142,16 @@ export class FakeGateway implements SlackGateway {
   private actionHandlers: Array<{ pattern: RegExp; handler: (a: InboundAction) => Promise<void> }> = [];
   private commandHandlers: Array<{ command: string; handler: (c: InboundCommand) => Promise<void> }> = [];
 
-  setBotUserId(id: string | undefined): void { this.botId = id; }
+  setBotUserId(id: string | undefined): void {
+    this.botId = id;
+    if (id) this.slackIdentity = { ...this.slackIdentity, userId: id };
+  }
+  setIdentity(identity: SlackBotIdentity): void {
+    this.slackIdentity = identity;
+    this.botId = identity.userId;
+  }
 
+  async identity(): Promise<SlackBotIdentity> { return this.slackIdentity; }
   async start(): Promise<void> { this.started = true; }
   async stop(): Promise<void> { this.started = false; }
   isConnected(): boolean { return this.started; }
@@ -202,4 +215,31 @@ export class FakeGateway implements SlackGateway {
       if (command === cmd.command) await handler(cmd);
     }
   }
+}
+
+function testAgent(id: string, name: string): Agent {
+  return {
+    id,
+    companyId: "co-1",
+    name,
+    urlKey: name.toLowerCase().replace(/\s+/g, "-"),
+    role: "general",
+    title: null,
+    icon: null,
+    status: "active",
+    reportsTo: null,
+    capabilities: null,
+    adapterType: "codex_local",
+    adapterConfig: {},
+    runtimeConfig: {},
+    budgetMonthlyCents: 0,
+    spentMonthlyCents: 0,
+    pauseReason: null,
+    pausedAt: null,
+    permissions: { canCreateAgents: false },
+    lastHeartbeatAt: null,
+    metadata: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
 }
