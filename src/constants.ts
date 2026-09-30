@@ -11,6 +11,7 @@ export const PLUGIN_ID = "xoomai.slack-socket";
 export const REQUIRED_BOT_SCOPES = [
   "app_mentions:read",
   "chat:write",
+  "files:write",
   "channels:history",
   "groups:history",
   "im:history",
