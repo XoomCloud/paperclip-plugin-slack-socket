@@ -57,6 +57,8 @@ export interface SlackSocketConfig {
    */
   seedThreadHistory: boolean;
   allowedSlackUserIds: string[];
+  /** Explicit approvers/answerers. Empty means no human decisions are authorized. */
+  humanDecisionSlackUserIds: string[];
   // --- Agent-initiated posting (the slack_post_message tool) ---------
   //
   // NOTE the inverted emptiness semantics versus `allowedSlackUserIds`
@@ -144,6 +146,12 @@ export interface PendingQuestion {
   question: string;
   askedAt: string; // ISO 8601
   timeoutMinutes: number;
+  /** Slack bot user id that owns the source conversation. */
+  bot?: string;
+  /** Actual question card ts when `ts` is the source thread root. */
+  questionTs?: string;
+  /** Button labels, when the question offered explicit choices. */
+  options?: string[];
 }
 
 // --- Gateway (thin wrapper around Bolt; FakeGateway in tests) ---

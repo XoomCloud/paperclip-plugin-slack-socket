@@ -22,7 +22,7 @@ export const REQUIRED_BOT_SCOPES = [
   "commands",
 ] as const;
 
-export const PLUGIN_VERSION = "0.12.0-xoomai.1";
+export const PLUGIN_VERSION = "0.13.0-xoomai.1";
 
 export const ACTION_IDS = {
   approvalApprove: "approval_approve",
@@ -67,6 +67,7 @@ export const STATE_KEYS = {
   issueThread: (issueId: string) => `issue-thread:${issueId}`,
   approvalMessageIndex: "approval-message-index",
   approvalMessage: (approvalId: string) => `approval-message:${approvalId}`,
+  approvalBot: (approvalId: string) => `approval-bot:${approvalId}`,
 } as const;
 
 export function stateScope(stateKey: string): ScopeKey {
@@ -88,6 +89,12 @@ export const ASK_HUMAN_TOOL_DECLARATION: PluginToolDeclaration = {
       },
       mode: { type: "string", enum: ["reaction", "answer"] },
       issueId: { type: "string", description: "Paperclip issue UUID the response is recorded on." },
+      options: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 5,
+        description: "Optional answer choices shown as Slack buttons; free-text replies remain available.",
+      },
       timeoutMinutes: {
         type: "number",
         description: "Minutes to wait before marking the question expired (default 1440).",
@@ -213,6 +220,7 @@ export const DEFAULT_CONFIG: SlackSocketConfig = {
   // decline it — see the Security section of the design doc.
   seedThreadHistory: true,
   allowedSlackUserIds: [],
+  humanDecisionSlackUserIds: [],
   agentPostMessageEnabled: false,
   agentPostToChannelsEnabled: false,
   agentPostChannelIds: [],

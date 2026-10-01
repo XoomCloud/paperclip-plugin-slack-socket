@@ -20,6 +20,7 @@ export const TEST_CONFIG: SlackSocketConfig = {
   companyId: "co-1",
   defaultChannelId: "C-DEFAULT",
   paperclipBaseUrl: "https://pc.example",
+  humanDecisionSlackUserIds: ["U5"],
 };
 
 export interface MockCtxBundle {

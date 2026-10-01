@@ -36,6 +36,16 @@ Every Slack root conversation creates its own Paperclip session for the resolved
 
 The bot posts `_Thinking…_` immediately, updates the elapsed time during long turns, and replaces it with the final response. Thread-history seeding and delta hydration preserve context while keeping every thread isolated.
 
+## Human decisions and approvals
+
+- `ask_human` follows the validated Paperclip task origin back to the same employee bot and Slack thread.
+- It accepts typed answers or up to five button choices, permits one pending question per thread, records the answer as a task comment, wakes the assignee and retires the controls.
+- Approval buttons are bound to the exact posted card and canonical pending Paperclip approval; only `humanDecisionSlackUserIds` may answer or decide, and an empty decision allowlist authorizes nobody.
+- Tasks without a valid Slack origin can use only the configured approvals/management channel.
+- The packaged `ops/xoomai-human` helper invokes the policy-enforced plugin API with the current employee run credential. It does not bypass Paperclip policy or require an owner token.
+
+Installers must bind a company-scoped, default-deny tool policy that includes only `xoomai.slack-socket:ask_human`, verify the effective policy for every selected employee, and add the wait/read/resume workflow to each employee's instructions. Provider-native tool enumeration is separate; use `xoomai-human` for both Codex and Claude when the native tool list omits the plugin tool.
+
 ## Preserved operational features
 
 The first configured Slack App is the operational app. It owns shared features that must not be duplicated across every employee bot:
@@ -99,6 +109,7 @@ Important defaults:
 - `streamPartialReplies: false` — internal adapter output and reasoning are not streamed into Slack.
 - `sessionIdleHours: 24` — idle sessions are closed and recreated.
 - outbound agent posting is disabled until explicitly enabled and allowlisted.
+- unanswered human questions expire after 24 hours by default; expiry is never approval.
 
 Press **Save** before **Test Connection** the first time so Paperclip can authorize access to the selected secrets.
 

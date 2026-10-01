@@ -229,6 +229,14 @@ const manifest: PaperclipPluginManifestV1 = {
           "When empty (the default), the allowlist is disabled and any workspace member can use the bot. When non-empty, only the listed Slack user IDs (e.g. U01ABC2DEF3) can interact with it at all — everyone else is ignored silently, with no reply. Find a member's Slack user ID via their profile → \"Copy member ID\".",
         default: DEFAULT_CONFIG.allowedSlackUserIds,
       },
+      humanDecisionSlackUserIds: {
+        type: "array",
+        items: { type: "string" },
+        title: "Human decision maker Slack user IDs",
+        description:
+          "Slack user IDs allowed to answer ask_human questions or decide formal approvals. Empty authorizes nobody; configure this explicitly even when general chat access is unrestricted.",
+        default: DEFAULT_CONFIG.humanDecisionSlackUserIds,
+      },
       agentPostMessageEnabled: {
         type: "boolean",
         title: "Let agents post to Slack",

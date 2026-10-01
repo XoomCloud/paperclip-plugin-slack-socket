@@ -1,15 +1,16 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
-import { ACTION_IDS, STATE_KEYS } from "./constants.js";
+import { ACTION_IDS, STATE_KEYS, stateScope } from "./constants.js";
 import {
   formatApprovalCreated,
   formatApprovalDecided,
   formatApprovalDecidedElsewhere,
 } from "./formatters.js";
 import { getMessageLink, linkMessage, unlinkMessage } from "./message-link.js";
+import { humanOrigin, type HumanOriginDeps } from "./human-origin.js";
 import { errString } from "./redact.js";
 import type { InboundAction, SlackGateway, SlackSocketConfig } from "./types.js";
 
-export interface ApprovalDeps {
+export interface ApprovalDeps extends HumanOriginDeps {
   ctx: PluginContext;
   gateway: SlackGateway;
   getConfig: () => Promise<SlackSocketConfig>;
@@ -27,18 +28,69 @@ export interface Approvals {
   handleAction(action: InboundAction): Promise<void>;
 }
 
-export function createApprovals({ ctx, gateway, getConfig, companyId }: ApprovalDeps): Approvals {
+export function createApprovals(deps: ApprovalDeps): Approvals {
+  const { ctx, gateway, getConfig, companyId } = deps;
+
+  async function gatewayForApproval(approvalId: string): Promise<SlackGateway> {
+    const bot = (await ctx.state.get(stateScope(STATE_KEYS.approvalBot(approvalId)))) as string | null;
+    return bot ? deps.gatewayForBot?.(bot) ?? gateway : gateway;
+  }
+
+  async function paperclipHeaders(cfg: SlackSocketConfig): Promise<Record<string, string>> {
+    if (!cfg.paperclipApiKeyRef) return {};
+    const apiKey = await ctx.secrets.resolve(cfg.paperclipApiKeyRef, { companyId: cfg.companyId });
+    return { Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function readCanonicalApproval(approvalId: string, cfg: SlackSocketConfig): Promise<Record<string, unknown>> {
+    const response = await ctx.http.fetch(
+      `${cfg.paperclipBaseUrl}/api/approvals/${encodeURIComponent(approvalId)}`,
+      { headers: await paperclipHeaders(cfg) },
+    );
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Approval read returned HTTP ${response.status}`);
+    }
+    const json = await response.json() as Record<string, unknown>;
+    const candidate = json.approval;
+    return candidate && typeof candidate === "object" ? candidate as Record<string, unknown> : json;
+  }
+
   ctx.events.on("approval.created", { companyId }, async (event) => {
     const e = event as { entityId?: string; payload: unknown };
     const cfg = await getConfig();
     if (!cfg.notifyOnApprovalCreated || !e.entityId) return;
-    const channel = cfg.approvalsChannelId || cfg.defaultChannelId;
-    if (!channel) return;
     const approvalId = e.entityId;
     try {
-      const posted = await gateway.postMessage({
+      let payload = e.payload as Record<string, unknown>;
+      try {
+        const canonical = await readCanonicalApproval(approvalId, cfg);
+        if (canonical.companyId !== companyId) throw new Error("Approval company mismatch");
+        const canonicalPayload = canonical.payload;
+        payload = {
+          ...payload,
+          ...canonical,
+          ...(canonicalPayload && typeof canonicalPayload === "object" ? canonicalPayload as Record<string, unknown> : {}),
+        };
+      } catch (err) {
+        ctx.logger.warn("Could not enrich a new approval from the canonical Paperclip record", {
+          err: errString(err), approvalId,
+        });
+      }
+
+      const issueIds = Array.isArray(payload.issueIds)
+        ? payload.issueIds.filter((value): value is string => typeof value === "string")
+        : [];
+      const origin = issueIds.length === 1
+        ? await humanOrigin(ctx, companyId, issueIds[0]!, deps)
+        : null;
+      const channel = origin?.channel ?? cfg.approvalsChannelId ?? cfg.defaultChannelId;
+      if (!channel) return;
+      const selectedGateway = origin?.gateway ?? gateway;
+      if (origin) await ctx.state.set(stateScope(STATE_KEYS.approvalBot(approvalId)), origin.bot);
+      const posted = await selectedGateway.postMessage({
         channel,
-        ...formatApprovalCreated(approvalId, e.payload as Record<string, unknown>, cfg.paperclipBaseUrl),
+        threadTs: origin?.threadTs,
+        ...formatApprovalCreated(approvalId, payload, cfg.paperclipBaseUrl),
       });
       await ctx.metrics.write("slack.notifications.sent", 1, { type: "approval_created" }).catch(() => {});
       // Remember where the message landed so a decision made anywhere else
@@ -72,7 +124,7 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
     const link = await getMessageLink(ctx, key);
     if (!link) return;
     try {
-      await gateway.updateMessage({
+      await (await gatewayForApproval(approvalId)).updateMessage({
         channel: link.channel,
         ts: link.ts,
         ...formatApprovalDecidedElsewhere(approvalId, e.payload as Record<string, unknown> | null),
@@ -90,6 +142,7 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
     // legitimately rewrite this message again, and a link kept alive after a
     // failed update would only sit there until the 30-day prune.
     await unlinkMessage(ctx, STATE_KEYS.approvalMessageIndex, key);
+    await ctx.state.delete(stateScope(STATE_KEYS.approvalBot(approvalId)));
   });
 
   async function postFailureEphemeral(
@@ -175,7 +228,7 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
           approvalId,
         });
       });
-      await gateway.updateMessage({
+      await (await gatewayForApproval(approvalId)).updateMessage({
         channel: action.channel,
         ts: action.messageTs,
         ...formatApprovalDecided(approvalId, decision, action.userName),
@@ -197,6 +250,7 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
         });
       });
       await ctx.metrics.write("slack.approvals.decided", 1, { decision }).catch(() => {});
+      await ctx.state.delete(stateScope(STATE_KEYS.approvalBot(approvalId))).catch(() => {});
     } catch (err) {
       ctx.logger.warn("Approval decision via Slack failed", { err: errString(err), approvalId });
       await postFailureEphemeral(action, approvalId, decision, "It may already be decided.");
@@ -206,8 +260,8 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
   return {
     async handleAction(action) {
       const cfg = await getConfig();
-      const decision = action.actionId === ACTION_IDS.approvalApprove ? "approve" : "reject";
       const approvalId = action.value;
+      const decision = action.actionId === ACTION_IDS.approvalApprove ? "approve" : "reject";
 
       if (!approvalId) {
         ctx.logger.warn("Approval action received with an empty value; ignoring", {
@@ -222,6 +276,33 @@ export function createApprovals({ ctx, gateway, getConfig, companyId }: Approval
           })
           .catch(() => {});
         return;
+      }
+
+      // Production creates Approvals with bot-origin dependencies. Keep the
+      // dependency-free path for the upstream-compatible unit/API surface;
+      // the live worker always takes this strict branch.
+      if (deps.gatewayForBot) {
+        if (!cfg.humanDecisionSlackUserIds.includes(action.user)) return;
+        const link = await getMessageLink(ctx, STATE_KEYS.approvalMessage(approvalId));
+        if (!link || link.channel !== action.channel || link.ts !== action.messageTs) {
+          ctx.logger.warn("Refusing an approval action that does not match the linked Slack card", {
+            approvalId, channel: action.channel, messageTs: action.messageTs,
+          });
+          return;
+        }
+
+        try {
+          const canonical = await readCanonicalApproval(approvalId, cfg);
+          if (canonical.companyId !== cfg.companyId || canonical.status !== "pending") {
+            throw new Error("Approval is not a pending approval for this company");
+          }
+        } catch (err) {
+          ctx.logger.warn("Refusing an approval decision that could not be validated canonically", {
+            err: errString(err), approvalId,
+          });
+          await postFailureEphemeral(action, approvalId, decision, "The approval is not pending or could not be validated.");
+          return;
+        }
       }
 
 
