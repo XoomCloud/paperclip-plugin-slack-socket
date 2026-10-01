@@ -214,6 +214,13 @@ const manifest: PaperclipPluginManifestV1 = {
           "How a 1:1 DM with the bot is scoped. \"channel\" (the default) treats the whole DM as one continuous conversation: the bot remembers your previous messages and replies at the top level, like a chat window. \"thread\" starts a fresh conversation for every top-level DM message and posts the reply in a thread under it — the pre-0.10.0 behavior. Channels, private channels and group DMs are always thread-scoped and are unaffected by this setting.",
         default: DEFAULT_CONFIG.dmSessionMode,
       },
+      rehydrateConversationEveryTurn: {
+        type: "boolean",
+        title: "Restore recent conversation on every turn",
+        description:
+          "Supply bounded Slack thread or DM history on every message, including when managed CLI sessions are ephemeral.",
+        default: DEFAULT_CONFIG.rehydrateConversationEveryTurn,
+      },
       seedThreadHistory: {
         type: "boolean",
         title: "Seed new conversations with the Slack thread",

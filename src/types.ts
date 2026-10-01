@@ -56,6 +56,8 @@ export interface SlackSocketConfig {
    * only ever reads text addressed to it, at the cost of that question.
    */
   seedThreadHistory: boolean;
+  /** Re-supply bounded Slack context on every turn for ephemeral managed CLI sessions. */
+  rehydrateConversationEveryTurn?: boolean;
   allowedSlackUserIds: string[];
   /** Explicit approvers/answerers. Empty means no human decisions are authorized. */
   humanDecisionSlackUserIds: string[];
@@ -278,6 +280,7 @@ export interface SlackGateway {
    * boundary are not relied upon.
    */
   fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]>;
+  fetchConversationHistory?(channel: string, limit: number, latest: string): Promise<ThreadMessage[]>;
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void;
   onMention(handler: (msg: InboundMessage) => Promise<void>): void;
   onReaction(handler: (reaction: InboundReaction) => Promise<void>): void;

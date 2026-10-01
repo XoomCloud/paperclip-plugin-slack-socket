@@ -182,6 +182,10 @@ export class FakeGateway implements SlackGateway {
     return `name-${userId}`;
   }
 
+  async fetchConversationHistory(_channel: string, _limit: number, latest: string): Promise<ThreadMessage[]> {
+    return this.threadReplies.filter((message) => Number(message.ts) < Number(latest));
+  }
+
   async fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]> {
     this.threadFetches.push({ channel, threadTs, limit, oldest });
     return this.threadReplies;

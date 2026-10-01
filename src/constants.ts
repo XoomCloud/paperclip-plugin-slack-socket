@@ -219,6 +219,7 @@ export const DEFAULT_CONFIG: SlackSocketConfig = {
   // messages from people who never addressed it) and some operators will
   // decline it — see the Security section of the design doc.
   seedThreadHistory: true,
+  rehydrateConversationEveryTurn: false,
   allowedSlackUserIds: [],
   humanDecisionSlackUserIds: [],
   agentPostMessageEnabled: false,
