@@ -40,6 +40,11 @@ export function createGatewayProxy(
   };
 
   return {
+    async downloadFile(file, maxBytes) {
+      const gateway = getGateway();
+      if (!gateway?.downloadFile) throw new Error("Slack file gateway unavailable");
+      return gateway.downloadFile(file, maxBytes);
+    },
     async start() {
       const gateway = getGateway();
       if (!gateway) {
@@ -118,6 +123,12 @@ export function createGatewayProxy(
         return userId;
       }
       return gateway.getUserDisplayName(userId);
+    },
+
+    async fetchConversationHistory(channel: string, limit: number, latest: string) {
+      const gateway = getGateway();
+      if (!gateway?.fetchConversationHistory) throw new Error("DM history gateway unavailable");
+      return gateway.fetchConversationHistory(channel, limit, latest);
     },
 
     async fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string) {

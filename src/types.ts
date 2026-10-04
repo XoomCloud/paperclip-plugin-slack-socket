@@ -26,6 +26,9 @@ export interface AdditionalSlackBotConfig {
 }
 
 export interface SlackSocketConfig {
+  /** IT-provisioned spool; service writes, owning employee reads, siblings denied. */
+  inboundFileRoot: string;
+  inboundFileMaxBytes: number;
   slackBotTokenRef: SecretRef;
   slackAppTokenRef: SecretRef;
   paperclipApiKeyRef: SecretRef;
@@ -56,7 +59,11 @@ export interface SlackSocketConfig {
    * only ever reads text addressed to it, at the cost of that question.
    */
   seedThreadHistory: boolean;
+  /** Re-supply bounded Slack context on every turn for ephemeral managed CLI sessions. */
+  rehydrateConversationEveryTurn?: boolean;
   allowedSlackUserIds: string[];
+  /** Explicit approvers/answerers. Empty means no human decisions are authorized. */
+  humanDecisionSlackUserIds: string[];
   // --- Agent-initiated posting (the slack_post_message tool) ---------
   //
   // NOTE the inverted emptiness semantics versus `allowedSlackUserIds`
@@ -144,17 +151,33 @@ export interface PendingQuestion {
   question: string;
   askedAt: string; // ISO 8601
   timeoutMinutes: number;
+  /** Slack bot user id that owns the source conversation. */
+  bot?: string;
+  /** Actual question card ts when `ts` is the source thread root. */
+  questionTs?: string;
+  /** Button labels, when the question offered explicit choices. */
+  options?: string[];
 }
 
 // --- Gateway (thin wrapper around Bolt; FakeGateway in tests) ---
 
 export interface InboundMessage {
+  files?: SlackFile[];
   channel: string;
   channelType: "im" | "channel" | "group";
   user: string;
   text: string;
   ts: string;
   threadTs?: string;
+}
+
+/** Normalized Slack metadata; private URL never enters the employee prompt. */
+export interface SlackFile {
+  id: string;
+  name: string;
+  mimetype: string;
+  size?: number;
+  url_private?: string;
 }
 
 export interface InboundReaction {
@@ -212,6 +235,7 @@ export interface SlackBotIdentity {
  * author instead of an anonymous one.
  */
 export interface ThreadMessage {
+  files?: SlackFile[];
   user: string;
   text: string;
   ts: string;
@@ -219,6 +243,7 @@ export interface ThreadMessage {
 }
 
 export interface SlackGateway {
+  downloadFile?(file: SlackFile, maxBytes: number): Promise<Uint8Array>;
   start(): Promise<void>;
   stop(): Promise<void>;
   isConnected(): boolean;
@@ -270,6 +295,7 @@ export interface SlackGateway {
    * boundary are not relied upon.
    */
   fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]>;
+  fetchConversationHistory?(channel: string, limit: number, latest: string): Promise<ThreadMessage[]>;
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void;
   onMention(handler: (msg: InboundMessage) => Promise<void>): void;
   onReaction(handler: (reaction: InboundReaction) => Promise<void>): void;

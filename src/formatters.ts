@@ -74,10 +74,14 @@ export function formatAgentRunFailed(payload: Payload): SlackContent {
 
 export function formatApprovalCreated(approvalId: string, payload: Payload, baseUrl: string): SlackContent {
   const title = escapeMrkdwn(str(payload, "title") || str(payload, "description") || approvalId);
+  const detail = [str(payload, "description"), str(payload, "scope"), str(payload, "evidence"), str(payload, "impact")]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 2_200);
   return {
     text: `Approval requested: ${title}`,
     blocks: [
-      section(`:raised_hand: *Approval requested*\n${title}`),
+      section(`:raised_hand: *Approval requested*\n${title}${detail ? `\n${escapeMrkdwn(detail)}` : ""}`),
       {
         type: "actions",
         elements: [

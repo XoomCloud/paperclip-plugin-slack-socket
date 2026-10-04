@@ -20,6 +20,7 @@ const manifest: PaperclipPluginManifestV1 = {
   author: "XoomCloud",
   categories: ["connector", "automation"],
   capabilities: [
+    "issues.read",
     "issues.create",
     "issue.comments.create",
     "issues.wakeup",
@@ -45,6 +46,15 @@ const manifest: PaperclipPluginManifestV1 = {
   instanceConfigSchema: {
     type: "object",
     properties: {
+      inboundFileRoot: {
+        type: "string", title: "Private inbound file spool",
+        description: "Absolute IT-provisioned directory with agent-UUID children. Service writes; only the owning employee reads. Never use a shared employee-writable directory.",
+        default: DEFAULT_CONFIG.inboundFileRoot,
+      },
+      inboundFileMaxBytes: {
+        type: "integer", title: "Inbound attachment byte limit", minimum: 1, maximum: 10485760,
+        default: DEFAULT_CONFIG.inboundFileMaxBytes,
+      },
       slackBotTokenRef: {
         // The host's secret picker stores a `{ type: "secret_ref", secretId,
         // version }` object, and ctx.secrets.resolve() fails closed on plain
@@ -214,6 +224,13 @@ const manifest: PaperclipPluginManifestV1 = {
           "How a 1:1 DM with the bot is scoped. \"channel\" (the default) treats the whole DM as one continuous conversation: the bot remembers your previous messages and replies at the top level, like a chat window. \"thread\" starts a fresh conversation for every top-level DM message and posts the reply in a thread under it — the pre-0.10.0 behavior. Channels, private channels and group DMs are always thread-scoped and are unaffected by this setting.",
         default: DEFAULT_CONFIG.dmSessionMode,
       },
+      rehydrateConversationEveryTurn: {
+        type: "boolean",
+        title: "Restore recent conversation on every turn",
+        description:
+          "Supply bounded Slack thread or DM history on every message, including when managed CLI sessions are ephemeral.",
+        default: DEFAULT_CONFIG.rehydrateConversationEveryTurn,
+      },
       seedThreadHistory: {
         type: "boolean",
         title: "Seed new conversations with the Slack thread",
@@ -228,6 +245,14 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "When empty (the default), the allowlist is disabled and any workspace member can use the bot. When non-empty, only the listed Slack user IDs (e.g. U01ABC2DEF3) can interact with it at all — everyone else is ignored silently, with no reply. Find a member's Slack user ID via their profile → \"Copy member ID\".",
         default: DEFAULT_CONFIG.allowedSlackUserIds,
+      },
+      humanDecisionSlackUserIds: {
+        type: "array",
+        items: { type: "string" },
+        title: "Human decision maker Slack user IDs",
+        description:
+          "Slack user IDs allowed to answer ask_human questions or decide formal approvals. Empty authorizes nobody; configure this explicitly even when general chat access is unrestricted.",
+        default: DEFAULT_CONFIG.humanDecisionSlackUserIds,
       },
       agentPostMessageEnabled: {
         type: "boolean",

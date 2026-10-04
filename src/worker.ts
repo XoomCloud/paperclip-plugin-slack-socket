@@ -1,3 +1,6 @@
+import { createInboundFilePreparer, type StoredFile } from "./inbound-storage.js";
+import { createInboundFailureState } from "./inbound-failure-state.js";
+import { createIssueBinder, uploadInboundEvidence } from "./inbound-evidence.js";
 import {
   definePlugin,
   runWorker,
@@ -21,7 +24,7 @@ import { createChat, type Chat } from "./chat.js";
 import { runCleanup } from "./cleanup.js";
 import { createCommands, type Commands } from "./commands.js";
 import { mergeConfig } from "./config.js";
-import { API_ROUTE_KEYS, DEFAULT_CONFIG, JOB_KEYS, PLUGIN_ID, SLASH_COMMAND } from "./constants.js";
+import { API_ROUTE_KEYS, DEFAULT_CONFIG, JOB_KEYS, PLUGIN_ID, SLASH_COMMAND, stateScope } from "./constants.js";
 import { createEventDeduper } from "./event-dedup.js";
 import { createGatewayProxy } from "./gateway-proxy.js";
 import { registerNotifications } from "./notifications.js";
@@ -30,7 +33,9 @@ import { errString } from "./redact.js";
 import { describeHostError } from "./host-errors.js";
 import type {
   AdditionalSlackBotConfig,
+  InboundAction,
   InboundMessage,
+  InboundReaction,
   SlackBotIdentity,
   SlackGateway,
   SlackSocketConfig,
@@ -164,7 +169,22 @@ function chatForAgent(ctx: PluginContext, runtime: AdditionalBotRuntime, agentId
   const existing = runtime.chats.get(agentId);
   if (existing) return existing;
   const routedConfig: SlackSocketConfig = { ...runtime.config };
+  const prepareFiles = createInboundFilePreparer({
+    root: routedConfig.inboundFileRoot,
+    maxBytes: routedConfig.inboundFileMaxBytes,
+    download: async (file, cap) => {
+      if (!runtime.gateway.downloadFile) throw new Error("Slack file gateway unavailable");
+      return runtime.gateway.downloadFile(file, cap);
+    },
+    readCache: async key => await ctx.state.get(stateScope(key)) as StoredFile | null,
+    writeCache: async (key, record) => { await ctx.state.set(stateScope(key), record); },
+    ...createInboundFailureState(ctx),
+    boundIssue: createIssueBinder(ctx, routedConfig.companyId),
+    attach: async (issueId, record, bytes, recoverOnly) => uploadInboundEvidence(routedConfig.paperclipBaseUrl, routedConfig.companyId, paperclipBridgeApiKey ?? "", issueId, record, bytes, recoverOnly),
+    notify: async (source, text) => { await runtime.gateway.postMessage({ channel: source.channel, threadTs: source.threadTs, text }); },
+  });
   const chat = createChat({
+    prepareFiles,
     ctx,
     gateway: runtime.gateway,
     getConfig: async () => routedConfig,
@@ -268,12 +288,90 @@ async function forwardChatThroughScopedRoute(
   }
 }
 
+async function forwardActionThroughScopedRoute(
+  cfg: SlackSocketConfig,
+  botKey: string,
+  action: InboundAction,
+): Promise<void> {
+  const url = `${cfg.paperclipBaseUrl.replace(/\/+$/, "")}/api/plugins/${PLUGIN_ID}/api/slack-inbound`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(paperclipBridgeApiKey ? { authorization: `Bearer ${paperclipBridgeApiKey}` } : {}),
+    },
+    body: JSON.stringify({ companyId: cfg.companyId, botKey, surface: "action", action }),
+  });
+  if (!response.ok) throw new Error(`Paperclip scoped Slack action bridge returned HTTP ${response.status}`);
+}
+
+async function forwardReactionThroughScopedRoute(
+  cfg: SlackSocketConfig,
+  botKey: string,
+  reaction: InboundReaction,
+): Promise<void> {
+  const url = `${cfg.paperclipBaseUrl.replace(/\/+$/, "")}/api/plugins/${PLUGIN_ID}/api/slack-inbound`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(paperclipBridgeApiKey ? { authorization: `Bearer ${paperclipBridgeApiKey}` } : {}),
+    },
+    body: JSON.stringify({ companyId: cfg.companyId, botKey, surface: "reaction", reaction }),
+  });
+  if (!response.ok) throw new Error(`Paperclip scoped Slack reaction bridge returned HTTP ${response.status}`);
+}
+
 async function handleScopedApiRequest(
   ctx: PluginContext,
   input: PluginApiRequestInput,
 ): Promise<PluginApiResponse> {
   if (input.routeKey !== API_ROUTE_KEYS.slackInbound) {
     return { status: 404, body: { error: "Unknown plugin API route" } };
+  }
+
+  const raw = input.body as Record<string, unknown> | null;
+  if (raw?.surface === "reaction") {
+    if (raw.companyId !== input.companyId || raw.companyId !== boundCompanyId) {
+      return { status: 403, body: { error: "Company scope mismatch" } };
+    }
+    const botKey = typeof raw.botKey === "string" ? raw.botKey : "primary";
+    const runtime = botKey === "primary" ? primaryBotRuntime : additionalBotRuntimes.get(botKey);
+    const reaction = raw.reaction as InboundReaction | undefined;
+    if (
+      !runtime || !reaction ||
+      ![reaction.user, reaction.channel, reaction.messageTs, reaction.reaction]
+        .every((value) => typeof value === "string")
+    ) return { status: 400, body: { error: "Invalid Slack reaction payload" } };
+    if (!(await checkAccess(ctx, reaction.user, "reaction", runtime.config, botKey))) {
+      return { status: 403, body: { error: "Slack user is not allowed" } };
+    }
+    await ensureCoreModules(ctx).askHuman.handleReaction(reaction);
+    return { status: 204 };
+  }
+  if (raw?.surface === "action") {
+    if (raw.companyId !== input.companyId || raw.companyId !== boundCompanyId) {
+      return { status: 403, body: { error: "Company scope mismatch" } };
+    }
+    const botKey = typeof raw.botKey === "string" ? raw.botKey : "primary";
+    const runtime = botKey === "primary" ? primaryBotRuntime : additionalBotRuntimes.get(botKey);
+    const action = raw.action as InboundAction | undefined;
+    if (
+      !runtime || !action ||
+      ![action.user, action.userName, action.channel, action.messageTs, action.actionId, action.value]
+        .every((value) => typeof value === "string")
+    ) return { status: 400, body: { error: "Invalid Slack action payload" } };
+    if (!(await checkAccess(ctx, action.user, "action", runtime.config, botKey))) {
+      return { status: 403, body: { error: "Slack user is not allowed" } };
+    }
+    if (/^approval_(approve|reject)$/.test(action.actionId)) {
+      await ensureCompanyModules(ctx, input.companyId).handleAction(action);
+    } else if (/^question_answer_[0-4]$/.test(action.actionId)) {
+      await ensureCoreModules(ctx).askHuman.handleAction(action);
+    } else {
+      return { status: 400, body: { error: "Unknown Slack action" } };
+    }
+    return { status: 204 };
   }
 
   const request = parseScopedChatRequest(input.body);
@@ -288,7 +386,10 @@ async function handleScopedApiRequest(
     return { status: 404, body: { error: "Unknown Slack bot key" } };
   }
   const { message, surface } = request;
-  if (botKey === "primary" && surface === "message") {
+  if (surface === "message") {
+    if (!(await checkAccess(ctx, message.user, surface, runtime.config, botKey))) {
+      return { status: 403, body: { error: "Slack user is not allowed" } };
+    }
     const { askHuman } = ensureCoreModules(ctx);
     if (await askHuman.tryHandleAnswer(message)) return { status: 204 };
   }
@@ -639,7 +740,13 @@ function ensureCoreModules(ctx: PluginContext): CoreModules {
   const gatewayProxy = createGatewayProxy(() => currentGateway, ctx.logger);
   const getConfig = async (): Promise<SlackSocketConfig> => getLiveConfig();
 
-  const askHuman = createAskHuman({ ctx, gateway: gatewayProxy, getConfig });
+  const askHuman = createAskHuman({
+    ctx,
+    gateway: gatewayProxy,
+    getConfig,
+    gatewayForBot,
+    agentIdForBot,
+  });
   const commands = createCommands({ ctx, gateway: gatewayProxy, getConfig });
   // Both tools register here, from setup()'s clean context, against the
   // gateway proxy — the real gateway doesn't exist until a config arrives.
@@ -660,13 +767,34 @@ function ensureCoreModules(ctx: PluginContext): CoreModules {
 // runs from the first successful `applyConfig` bind rather than from
 // `setup()`. Guarded by `eventsSubscribed` so a later same-company
 // reconfiguration never double-subscribes.
+function gatewayForBot(botUserId: string): SlackGateway | undefined {
+  if (primaryBotRuntime?.identity.userId === botUserId) return primaryBotRuntime.gateway;
+  return [...additionalBotRuntimes.values()].find((runtime) => runtime.identity.userId === botUserId)?.gateway;
+}
+
+function agentIdForBot(botUserId: string): string | undefined {
+  const runtime = primaryBotRuntime?.identity.userId === botUserId
+    ? primaryBotRuntime
+    : [...additionalBotRuntimes.values()].find((candidate) => candidate.identity.userId === botUserId);
+  if (!runtime) return undefined;
+  const resolution = resolveSlackBot(agentRegistry, runtime.identity);
+  return resolution.status === "resolved" ? resolution.agent.id : undefined;
+}
+
 function ensureCompanyModules(ctx: PluginContext, companyId: string): Approvals {
   const { gatewayProxy } = ensureCoreModules(ctx);
   const getConfig = async (): Promise<SlackSocketConfig> => getLiveConfig();
   if (!eventsSubscribed) {
     eventsSubscribed = true;
     registerNotifications({ ctx, gateway: gatewayProxy, getConfig, companyId });
-    approvals = createApprovals({ ctx, gateway: gatewayProxy, getConfig, companyId });
+    approvals = createApprovals({
+      ctx,
+      gateway: gatewayProxy,
+      getConfig,
+      companyId,
+      gatewayForBot,
+      agentIdForBot,
+    });
     const refresh = async () => {
       try {
         await refreshRegistry(ctx, companyId);
@@ -967,11 +1095,27 @@ export async function applyConfig(
   });
   gateway.onReaction(async (reaction) => {
     if (!(await checkAccess(ctx, reaction.user, "reaction"))) return;
+    if (prepared.scopedBridge) {
+      await forwardReactionThroughScopedRoute(cfg, "primary", reaction);
+      return;
+    }
     await askHuman.handleReaction(reaction);
   });
   gateway.onAction(/^approval_(approve|reject)$/, async (action) => {
     if (!(await checkAccess(ctx, action.user, "action"))) return;
+    if (prepared.scopedBridge) {
+      await forwardActionThroughScopedRoute(cfg, "primary", action);
+      return;
+    }
     await approvals.handleAction(action);
+  });
+  gateway.onAction(/^question_answer_[0-4]$/, async (action) => {
+    if (!(await checkAccess(ctx, action.user, "action"))) return;
+    if (prepared.scopedBridge) {
+      await forwardActionThroughScopedRoute(cfg, "primary", action);
+      return;
+    }
+    await askHuman.handleAction(action);
   });
   gateway.onCommand(SLASH_COMMAND, async (cmd) => {
     if (!(await checkAccess(ctx, cmd.user, "command"))) return;
@@ -1019,7 +1163,25 @@ export async function applyConfig(
           await forwardChatThroughScopedRoute(botCfg, botKey, "message", msg);
           return;
         }
+        if (await askHuman.tryHandleAnswer(msg)) return;
         await routeChat(ctx, runtime, "message", msg);
+      });
+      botGateway.onAction(/^(approval_(approve|reject)|question_answer_[0-4])$/, async (action) => {
+        if (!(await checkAccess(ctx, action.user, "action", botCfg, botKey))) return;
+        if (prepared.scopedBridge) {
+          await forwardActionThroughScopedRoute(botCfg, botKey, action);
+          return;
+        }
+        if (action.actionId.startsWith("approval_")) await approvals.handleAction(action);
+        else await askHuman.handleAction(action);
+      });
+      botGateway.onReaction(async (reaction) => {
+        if (!(await checkAccess(ctx, reaction.user, "reaction", botCfg, botKey))) return;
+        if (prepared.scopedBridge) {
+          await forwardReactionThroughScopedRoute(botCfg, botKey, reaction);
+          return;
+        }
+        await askHuman.handleReaction(reaction);
       });
       await botGateway.start();
     }
@@ -1069,7 +1231,7 @@ const plugin = definePlugin({
     ctx.jobs.register(JOB_KEYS.cleanup, async () => {
       if (!currentGateway) return;
       const { gatewayProxy } = ensureCoreModules(ctx);
-      await runCleanup(ctx, gatewayProxy, getLiveConfig());
+      await runCleanup(ctx, gatewayProxy, getLiveConfig(), gatewayForBot);
     });
     ctx.jobs.register(JOB_KEYS.agentRegistryRefresh, async () => {
       if (!boundCompanyId) return;

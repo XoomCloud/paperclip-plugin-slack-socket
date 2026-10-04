@@ -11,7 +11,7 @@ describe("manifest", () => {
   it("declares the exact least-privilege capability set", () => {
     expect([...manifest.capabilities].sort()).toEqual(
       [
-        "issues.create", "issue.comments.create", "issues.wakeup",
+        "issues.create", "issues.read", "issue.comments.create", "issues.wakeup",
         "agent.sessions.create", "agent.sessions.send", "agent.sessions.close",
         "agents.read",
         "agent.tools.register", "http.outbound", "events.subscribe",

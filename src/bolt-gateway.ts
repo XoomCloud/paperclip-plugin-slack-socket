@@ -1,3 +1,5 @@
+import { downloadSlackFile, mapSlackFiles } from "./inbound-files.js";
+import type { SlackFile } from "./types.js";
 import boltPkg from "@slack/bolt";
 import { REQUIRED_BOT_SCOPES } from "./constants.js";
 import { errString } from "./redact.js";
@@ -57,6 +59,7 @@ export interface GatewayTokenDiagnostics {
 export class BoltGateway implements SlackGateway {
   private readonly app: InstanceType<typeof App>;
   private readonly logger: GatewayLogger;
+  private readonly botToken: string;
   private connected = false;
   private botId: string | undefined;
   private botIdentity: SlackBotIdentity | undefined;
@@ -71,6 +74,7 @@ export class BoltGateway implements SlackGateway {
 
   constructor(opts: { botToken: string; appToken: string; logger: GatewayLogger }) {
     this.logger = opts.logger;
+    this.botToken = opts.botToken;
     this.app = new App({
       token: opts.botToken,
       appToken: opts.appToken,
@@ -98,7 +102,7 @@ export class BoltGateway implements SlackGateway {
     });
 
     this.app.event("app_mention", async ({ event }) => {
-      const e = event as { channel: string; user?: string; text?: string; ts: string; thread_ts?: string };
+      const e = event as { channel: string; user?: string; text?: string; ts: string; thread_ts?: string; files?: unknown };
       await this.dispatch(this.mentionHandlers, {
         channel: e.channel,
         // Unlike `message`, app_mention carries no channel_type field, so
@@ -112,13 +116,14 @@ export class BoltGateway implements SlackGateway {
         text: e.text ?? "",
         ts: e.ts,
         threadTs: e.thread_ts,
+        ...(e.files ? { files: mapSlackFiles(e.files) } : {}),
       });
     });
 
     this.app.message(async ({ message }) => {
       const m = message as {
         subtype?: string; bot_id?: string; channel: string; channel_type?: string;
-        user?: string; text?: string; ts: string; thread_ts?: string;
+        user?: string; text?: string; ts: string; thread_ts?: string; files?: unknown;
       };
       if (!shouldDispatchMessage(m)) return;
       const channelType = m.channel_type === "im" ? "im" : m.channel_type === "group" ? "group" : "channel";
@@ -132,6 +137,7 @@ export class BoltGateway implements SlackGateway {
         text: m.text ?? "",
         ts: m.ts,
         threadTs: m.thread_ts,
+        ...(m.files ? { files: mapSlackFiles(m.files) } : {}),
       });
     });
 
@@ -362,6 +368,26 @@ export class BoltGateway implements SlackGateway {
    * existing fallback label for an unresolvable author covers it, so no
    * extra field was added here for it.
    */
+  async downloadFile(file: SlackFile, maxBytes: number): Promise<Uint8Array> {
+    return downloadSlackFile(file, this.botToken, maxBytes);
+  }
+
+  async fetchConversationHistory(channel: string, limit: number, latest: string): Promise<ThreadMessage[]> {
+    const response = await this.app.client.conversations.history({
+      channel,
+      limit,
+      latest,
+      inclusive: false,
+    });
+    return (response.messages ?? []).map((message) => ({
+      user: message.user ?? "",
+      text: message.text ?? "",
+      ts: message.ts ?? "",
+      isBot: this.botId !== undefined && message.user === this.botId,
+      ...(message.files ? { files: mapSlackFiles(message.files) } : {}),
+    })).reverse();
+  }
+
   async fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]> {
     const collected: ThreadMessage[] = [];
     let cursor: string | undefined;
@@ -375,7 +401,7 @@ export class BoltGateway implements SlackGateway {
       const res = await this.app.client.conversations.replies(cursor ? { ...base, cursor } : base);
       const messages = res.messages;
       if (Array.isArray(messages)) {
-        for (const m of messages as Array<{ user?: string; text?: string; ts?: string }>) {
+        for (const m of messages as Array<{ user?: string; text?: string; ts?: string; files?: unknown }>) {
           collected.push({
             user: m.user ?? "",
             text: m.text ?? "",
@@ -389,6 +415,7 @@ export class BoltGateway implements SlackGateway {
             // workflow-bot post, and treating any bot_id as "self" would
             // present a third party's words to the agent as its own.
             isBot: this.botId !== undefined && m.user === this.botId,
+            ...(m.files ? { files: mapSlackFiles(m.files) } : {}),
           });
         }
       }

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Usage: sudo bash provision-inbound-spool ROOT AGENT_UUID EMPLOYEE_LINUX_USER
+set -euo pipefail
+[[ $EUID -eq 0 && $# -eq 3 ]] || { echo 'Usage: sudo bash provision-inbound-spool ROOT AGENT_UUID EMPLOYEE_LINUX_USER' >&2; exit 2; }
+spool_root=$1
+employee_id=$2
+employee_user=$3
+[[ $spool_root == /var/lib/paperclip/slack-inbound ]] || { echo 'Review the script before using a different spool root' >&2; exit 2; }
+[[ $employee_id =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]] || exit 2
+[[ $employee_user =~ ^[a-z_][a-z0-9_-]{0,31}$ && $employee_user != paperclip && $employee_user != root ]] || exit 2
+getent passwd "$employee_user" >/dev/null
+getent passwd paperclip >/dev/null
+command -v setfacl >/dev/null
+[[ ! -L $spool_root && ! -L $spool_root/$employee_id ]] || exit 2
+install -d -o paperclip -g paperclip -m 0700 "$spool_root"
+[[ $(realpath "$spool_root") == "$spool_root" ]] || exit 2
+install -d -o paperclip -g paperclip -m 0700 "$spool_root/$employee_id"
+setfacl -b -k "$spool_root/$employee_id"
+# Top-level traversal only; employees cannot enumerate sibling directories.
+setfacl -m "u:$employee_user:--x" "$spool_root"
+setfacl -m "u:$employee_user:r-x" "$spool_root/$employee_id"
+setfacl -d -m "u::rwx,g::---,o::---,u:$employee_user:r-x,m::r-x" "$spool_root/$employee_id"
+getfacl -p "$spool_root/$employee_id"
+sudo -u "$employee_user" test -r "$spool_root/$employee_id"
+sudo -u "$employee_user" test -x "$spool_root/$employee_id"
+if sudo -u "$employee_user" test -w "$spool_root/$employee_id"; then echo 'Unsafe writable intake spool' >&2; exit 1; fi
