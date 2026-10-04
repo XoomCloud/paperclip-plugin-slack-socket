@@ -14,6 +14,7 @@ export async function runCleanup(
   ctx: PluginContext,
   gateway: SlackGateway,
   cfg: SlackSocketConfig,
+  gatewayForBot?: (bot: string) => SlackGateway | undefined,
 ): Promise<void> {
   const now = Date.now();
 
@@ -75,9 +76,11 @@ export async function runCleanup(
             issueId: pending.issueId,
           });
         }
-        await gateway.updateMessage({
+        const questionGateway = pending.bot ? gatewayForBot?.(pending.bot) : gateway;
+        if (!questionGateway) throw new Error("Question bot unavailable during expiry");
+        await questionGateway.updateMessage({
           channel: pending.channel,
-          ts: pending.ts,
+          ts: pending.questionTs ?? pending.ts,
           ...formatQuestionExpired(pending.question),
         });
       } catch (err) {

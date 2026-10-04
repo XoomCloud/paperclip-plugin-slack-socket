@@ -769,7 +769,11 @@ export function createChat(deps: ChatDeps): Chat {
     // own thread root has nothing above it to fetch. A DM under
     // dmSessionMode "thread" resolves to scope "thread" and seeds like any
     // other thread. Nothing to seed, ever — not retryable.
-    if (scope.scope !== "thread" || threadTs === undefined || threadTs === msg.ts) {
+    const hydrateDm =
+      scope.scope === "channel" &&
+      msg.channelType === "im" &&
+      (await getConfig()).rehydrateConversationEveryTurn === true;
+    if (!hydrateDm && (scope.scope !== "thread" || threadTs === undefined || threadTs === msg.ts)) {
       return { block: "", retryable: false, maxTs: undefined };
     }
     // Exact-ts exclusions: the triggering mention (it arrives as the prompt
@@ -783,9 +787,14 @@ export function createChat(deps: ChatDeps): Chat {
     try {
       const result = await withTimeout(
         (async () => {
-          const fetched = await gateway.fetchThreadReplies(
+          const fetched = hydrateDm
+            ? await (() => {
+              if (!gateway.fetchConversationHistory) throw new Error("DM history unavailable");
+              return gateway.fetchConversationHistory(msg.channel, THREAD_CONTEXT_MAX_MESSAGES + 1, msg.ts);
+            })()
+            : await gateway.fetchThreadReplies(
             msg.channel,
-            threadTs,
+            threadTs!,
             // Page SIZE, not the selection cap: conversations.replies pages
             // oldest-first, so a page size equal to THREAD_CONTEXT_MAX_MESSAGES
             // would fetch only the oldest ~250 messages of a long thread and
@@ -811,6 +820,7 @@ export function createChat(deps: ChatDeps): Chat {
           // too. A ts BEFORE the trigger (the genuine earlier bot alert this
           // feature exists to show) is kept.
           const history = fetched.filter((m) => {
+            if (hydrateDm && Number(m.ts) >= triggerTsNum) return false;
             if (m.ts !== "" && excludeTs.has(m.ts)) return false;
             if (m.isBot) {
               if (m.ts === "") return false;
@@ -825,6 +835,7 @@ export function createChat(deps: ChatDeps): Chat {
             // Not the same as "nothing survived selection" below, which is
             // normal: an empty fetch means the parent didn't come back
             // either.
+            if (hydrateDm) return { block: "", maxTs };
             ctx.logger.warn("Slack thread history came back empty; continuing without it", {
               channel: msg.channel,
               threadTs,
@@ -1299,7 +1310,9 @@ export function createChat(deps: ChatDeps): Chat {
       // overlapping first-mentions never both deliver the transcript into
       // the one shared session (see seedInFlight).
       const wantSeed =
-        cfg.seedThreadHistory && entry.seedPending === true && !seedInFlight.has(scope.key);
+        cfg.seedThreadHistory &&
+        (cfg.rehydrateConversationEveryTurn === true ||
+          (entry.seedPending === true && !seedInFlight.has(scope.key)));
       if (wantSeed) {
         seedInFlight.add(scope.key);
         claimedSeedKey = scope.key;
@@ -1326,6 +1339,14 @@ export function createChat(deps: ChatDeps): Chat {
       let seedMaxTs: string | undefined;
       if (wantSeed) {
         const result = await buildSeedBlock(msg, scope, placeholder.ts);
+        if (cfg.rehydrateConversationEveryTurn && result.retryable) {
+          await gateway.updateMessage({
+            channel: placeholder.channel,
+            ts: placeholder.ts,
+            text: "I couldn't load this conversation's recent history. Please retry your last message; I won't guess what it refers to.",
+          });
+          return;
+        }
         seed = result.block;
         // A retryable failure (fetch error/timeout) leaves seedPending set;
         // anything else — a delivered block, or nothing to seed — completes.

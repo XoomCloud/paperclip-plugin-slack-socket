@@ -1,0 +1,94 @@
+#!/usr/bin/python3
+"""Ask via Paperclip's policy-enforced plugin API using the current run credential."""
+import argparse
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--issue", required=True)
+parser.add_argument("--question", required=True)
+parser.add_argument("--option", action="append", default=[])
+parser.add_argument("--target", help="Configured management channel ID; only for tasks without a Slack origin")
+args = parser.parse_args()
+
+if len(args.option) > 5:
+    raise SystemExit("At most five --option values are allowed")
+if any(not value.strip() or len(value.strip()) > 75 for value in args.option):
+    raise SystemExit("Each --option label must contain 1-75 characters")
+
+base = os.environ["PAPERCLIP_API_URL"].rstrip("/")
+if not base.endswith("/api"):
+    base += "/api"
+company = os.environ["PAPERCLIP_COMPANY_ID"]
+agent = os.environ["PAPERCLIP_AGENT_ID"]
+run = os.environ["PAPERCLIP_RUN_ID"]
+
+
+def api(path, method="GET", body=None):
+    request = urllib.request.Request(
+        base + path,
+        method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={
+            "Authorization": "Bearer " + os.environ["PAPERCLIP_API_KEY"],
+            "Content-Type": "application/json",
+            "X-Paperclip-Run-Id": run,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"Paperclip request failed ({exc.code}): " + exc.read().decode()[:1500]) from exc
+
+
+issue = api("/issues/" + args.issue)
+if issue.get("companyId") != company or issue.get("assigneeAgentId") != agent:
+    raise SystemExit("Question task must belong to this company and be assigned to the current employee")
+
+project = issue.get("projectId") or os.environ.get("PAPERCLIP_PROJECT_ID")
+if not project:
+    projects = api("/companies/" + company + "/projects")
+    if isinstance(projects, dict):
+        projects = projects.get("projects", projects.get("data", []))
+    if not projects:
+        raise SystemExit("No company project exists for plugin execution context; configure one before asking")
+    project = projects[0]["id"]
+
+origin = re.search(r"^XoomAI conversation: bot:[^:]+:session:([^:]+):", issue.get("description") or "", re.M)
+target = origin.group(1) if origin else args.target
+if not target:
+    raise SystemExit("Task has no Slack origin; pass the configured management channel ID with --target")
+
+parameters = {
+    "issueId": args.issue,
+    "question": args.question,
+    "mode": "answer",
+    "target": target,
+}
+if args.option:
+    parameters["options"] = [value.strip() for value in args.option]
+
+result = api(
+    "/plugins/tools/execute",
+    "POST",
+    {
+        "tool": "xoomai.slack-socket:ask_human",
+        "parameters": parameters,
+        "runContext": {
+            "companyId": company,
+            "agentId": agent,
+            "runId": run,
+            "projectId": project,
+        },
+    },
+)
+inner = result.get("result", result)
+print(json.dumps(inner))
+if inner.get("isError") or inner.get("error") or (
+    isinstance(inner.get("data"), dict) and inner["data"].get("error")
+):
+    raise SystemExit(1)

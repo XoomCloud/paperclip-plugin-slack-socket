@@ -3387,3 +3387,60 @@ describe("delta hydration hardening (review findings)", () => {
     expect(entry.seededUpTo).toBeUndefined();
   });
 });
+
+describe("ephemeral provider conversation recovery", () => {
+  it("resends the original request and prior reply after the session was already seeded", async () => {
+    const { ctx, gateway, chat } = setup({ rehydrateConversationEveryTurn: true });
+    const message = (text: string, ts: string) => ({
+      channel: "C1",
+      channelType: "channel" as const,
+      user: "U1",
+      text,
+      ts,
+      threadTs: "100.1",
+    });
+    gateway.threadReplies = [
+      { user: "U1", text: "The target is the Microsoft 365 MCP on Hetzner.", ts: "100.1", isBot: false },
+    ];
+    await chat.handleMention(message("Confirm the target", "100.2"));
+    gateway.threadReplies.push({
+      user: "UBOT",
+      text: "Microsoft 365 MCP on Hetzner confirmed.",
+      ts: "100.3",
+      isBot: true,
+    });
+    await chat.handleMention(message("Install it there", "100.4"));
+    const prompt = (ctx.agents.sessions.sendMessage as any).mock.calls.at(-1)[2].prompt;
+    expect(prompt).toContain("The target is the Microsoft 365 MCP on Hetzner.");
+    expect(prompt).toContain("Microsoft 365 MCP on Hetzner confirmed.");
+    expect(prompt).toContain("Install it there");
+    expect(gateway.threadFetches.at(-1)?.oldest).toBeUndefined();
+  });
+
+  it("hydrates a channel-scoped DM on every turn and excludes future messages", async () => {
+    const { ctx, gateway, chat } = setup({
+      rehydrateConversationEveryTurn: true,
+      dmSessionMode: "channel",
+    });
+    await chat.handleMessage(dm("Remember the server: Hetzner", "100.1"));
+    gateway.threadReplies = [
+      { user: "U1", text: "Remember the server: Hetzner", ts: "100.1", isBot: false },
+      { user: "U1", text: "FUTURE SECRET", ts: "100.9", isBot: false },
+    ];
+    await chat.handleMessage(dm("Which server?", "100.2"));
+    const prompt = (ctx.agents.sessions.sendMessage as any).mock.calls.at(-1)[2].prompt;
+    expect(prompt).toContain("Remember the server: Hetzner");
+    expect(prompt).not.toContain("FUTURE SECRET");
+  });
+
+  it("does not invoke a context-blind agent if history retrieval fails", async () => {
+    const { ctx, gateway, chat } = setup({
+      rehydrateConversationEveryTurn: true,
+      dmSessionMode: "channel",
+    });
+    vi.spyOn(gateway, "fetchConversationHistory").mockRejectedValue(new Error("rate limited"));
+    await chat.handleMessage(dm("Install it", "100.2"));
+    expect(ctx.agents.sessions.sendMessage).not.toHaveBeenCalled();
+    expect(gateway.updates.at(-1)?.text).toContain("couldn't load");
+  });
+});

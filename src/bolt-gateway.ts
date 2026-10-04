@@ -362,6 +362,21 @@ export class BoltGateway implements SlackGateway {
    * existing fallback label for an unresolvable author covers it, so no
    * extra field was added here for it.
    */
+  async fetchConversationHistory(channel: string, limit: number, latest: string): Promise<ThreadMessage[]> {
+    const response = await this.app.client.conversations.history({
+      channel,
+      limit,
+      latest,
+      inclusive: false,
+    });
+    return (response.messages ?? []).map((message) => ({
+      user: message.user ?? "",
+      text: message.text ?? "",
+      ts: message.ts ?? "",
+      isBot: this.botId !== undefined && message.user === this.botId,
+    })).reverse();
+  }
+
   async fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]> {
     const collected: ThreadMessage[] = [];
     let cursor: string | undefined;

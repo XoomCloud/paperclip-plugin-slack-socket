@@ -20,6 +20,7 @@ export const TEST_CONFIG: SlackSocketConfig = {
   companyId: "co-1",
   defaultChannelId: "C-DEFAULT",
   paperclipBaseUrl: "https://pc.example",
+  humanDecisionSlackUserIds: ["U5"],
 };
 
 export interface MockCtxBundle {
@@ -179,6 +180,10 @@ export class FakeGateway implements SlackGateway {
 
   async getUserDisplayName(userId: string): Promise<string> {
     return `name-${userId}`;
+  }
+
+  async fetchConversationHistory(_channel: string, _limit: number, latest: string): Promise<ThreadMessage[]> {
+    return this.threadReplies.filter((message) => Number(message.ts) < Number(latest));
   }
 
   async fetchThreadReplies(channel: string, threadTs: string, limit: number, oldest?: string): Promise<ThreadMessage[]> {
