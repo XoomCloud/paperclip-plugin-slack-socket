@@ -26,6 +26,9 @@ export interface AdditionalSlackBotConfig {
 }
 
 export interface SlackSocketConfig {
+  /** IT-provisioned spool; service writes, owning employee reads, siblings denied. */
+  inboundFileRoot: string;
+  inboundFileMaxBytes: number;
   slackBotTokenRef: SecretRef;
   slackAppTokenRef: SecretRef;
   paperclipApiKeyRef: SecretRef;
@@ -159,12 +162,22 @@ export interface PendingQuestion {
 // --- Gateway (thin wrapper around Bolt; FakeGateway in tests) ---
 
 export interface InboundMessage {
+  files?: SlackFile[];
   channel: string;
   channelType: "im" | "channel" | "group";
   user: string;
   text: string;
   ts: string;
   threadTs?: string;
+}
+
+/** Normalized Slack metadata; private URL never enters the employee prompt. */
+export interface SlackFile {
+  id: string;
+  name: string;
+  mimetype: string;
+  size?: number;
+  url_private?: string;
 }
 
 export interface InboundReaction {
@@ -222,6 +235,7 @@ export interface SlackBotIdentity {
  * author instead of an anonymous one.
  */
 export interface ThreadMessage {
+  files?: SlackFile[];
   user: string;
   text: string;
   ts: string;
@@ -229,6 +243,7 @@ export interface ThreadMessage {
 }
 
 export interface SlackGateway {
+  downloadFile?(file: SlackFile, maxBytes: number): Promise<Uint8Array>;
   start(): Promise<void>;
   stop(): Promise<void>;
   isConnected(): boolean;

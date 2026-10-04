@@ -1,3 +1,6 @@
+import { createInboundFilePreparer, type StoredFile } from "./inbound-storage.js";
+import { createInboundFailureState } from "./inbound-failure-state.js";
+import { createIssueBinder, uploadInboundEvidence } from "./inbound-evidence.js";
 import {
   definePlugin,
   runWorker,
@@ -21,7 +24,7 @@ import { createChat, type Chat } from "./chat.js";
 import { runCleanup } from "./cleanup.js";
 import { createCommands, type Commands } from "./commands.js";
 import { mergeConfig } from "./config.js";
-import { API_ROUTE_KEYS, DEFAULT_CONFIG, JOB_KEYS, PLUGIN_ID, SLASH_COMMAND } from "./constants.js";
+import { API_ROUTE_KEYS, DEFAULT_CONFIG, JOB_KEYS, PLUGIN_ID, SLASH_COMMAND, stateScope } from "./constants.js";
 import { createEventDeduper } from "./event-dedup.js";
 import { createGatewayProxy } from "./gateway-proxy.js";
 import { registerNotifications } from "./notifications.js";
@@ -166,7 +169,22 @@ function chatForAgent(ctx: PluginContext, runtime: AdditionalBotRuntime, agentId
   const existing = runtime.chats.get(agentId);
   if (existing) return existing;
   const routedConfig: SlackSocketConfig = { ...runtime.config };
+  const prepareFiles = createInboundFilePreparer({
+    root: routedConfig.inboundFileRoot,
+    maxBytes: routedConfig.inboundFileMaxBytes,
+    download: async (file, cap) => {
+      if (!runtime.gateway.downloadFile) throw new Error("Slack file gateway unavailable");
+      return runtime.gateway.downloadFile(file, cap);
+    },
+    readCache: async key => await ctx.state.get(stateScope(key)) as StoredFile | null,
+    writeCache: async (key, record) => { await ctx.state.set(stateScope(key), record); },
+    ...createInboundFailureState(ctx),
+    boundIssue: createIssueBinder(ctx, routedConfig.companyId),
+    attach: async (issueId, record, bytes, recoverOnly) => uploadInboundEvidence(routedConfig.paperclipBaseUrl, routedConfig.companyId, paperclipBridgeApiKey ?? "", issueId, record, bytes, recoverOnly),
+    notify: async (source, text) => { await runtime.gateway.postMessage({ channel: source.channel, threadTs: source.threadTs, text }); },
+  });
   const chat = createChat({
+    prepareFiles,
     ctx,
     gateway: runtime.gateway,
     getConfig: async () => routedConfig,

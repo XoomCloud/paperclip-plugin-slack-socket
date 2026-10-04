@@ -12,6 +12,7 @@ export const REQUIRED_BOT_SCOPES = [
   "app_mentions:read",
   "chat:write",
   "files:write",
+  "files:read",
   "channels:history",
   "groups:history",
   "im:history",
@@ -22,7 +23,7 @@ export const REQUIRED_BOT_SCOPES = [
   "commands",
 ] as const;
 
-export const PLUGIN_VERSION = "0.13.0-xoomai.1";
+export const PLUGIN_VERSION = "0.14.0-xoomai.1";
 
 export const ACTION_IDS = {
   approvalApprove: "approval_approve",
@@ -192,6 +193,8 @@ export const DEFAULT_CHAT_PROMPT_PREAMBLE =
   `You are replying to a person in a Slack thread. Answer them directly and conversationally, in your own voice, and keep it concise and readable as a chat message. Put your entire reply between ${REPLY_OPEN_TAG} and ${REPLY_CLOSE_TAG}, and put nothing else inside those tags — no reasoning, no restating the wake payload or execution contract, no notes about what you're about to do. Any thinking must go outside the tags; only what's inside them will be shown to the person.`;
 
 export const DEFAULT_CONFIG: SlackSocketConfig = {
+  inboundFileRoot: "/var/lib/paperclip/slack-inbound",
+  inboundFileMaxBytes: 10 * 1024 * 1024,
   slackBotTokenRef: "",
   slackAppTokenRef: "",
   companyId: "",

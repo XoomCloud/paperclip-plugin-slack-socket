@@ -1,3 +1,6 @@
+import type { FileSource } from "./inbound-storage.js";
+import type { SlackFile } from "./types.js";
+import { prepareInboundTurn } from "./inbound-chat.js";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import {
   CHANNEL_SESSION_TS,
@@ -56,6 +59,7 @@ import type {
 import { MAX_MESSAGE_LENGTH, splitIntoChunks } from "./slack-text.js";
 
 export interface ChatDeps {
+  prepareFiles?: (files: SlackFile[], source: FileSource) => Promise<string>;
   ctx: PluginContext;
   gateway: SlackGateway;
   getConfig: () => Promise<SlackSocketConfig>;
@@ -761,7 +765,7 @@ export function createChat(deps: ChatDeps): Chat {
     msg: InboundMessage,
     scope: SessionScope,
     placeholderTs: string,
-  ): Promise<{ block: string; retryable: boolean; maxTs: string | undefined }> {
+  ): Promise<{ block: string; retryable: boolean; maxTs: string | undefined; attachmentMessages?: ThreadMessage[] }> {
     const threadTs = scope.replyThreadTs;
     // Whether there is a thread to read is resolveSessionScope's answer, not
     // a second guess at channel types here: a channel-scoped DM session
@@ -849,7 +853,7 @@ export function createChat(deps: ChatDeps): Chat {
             THREAD_CONTEXT_MAX_MESSAGES,
           );
           if (kept.length === 0) return { block: "", maxTs };
-          return { block: buildThreadContext(await resolveThreadEntries(kept), omitted), maxTs };
+          return { block: buildThreadContext(await resolveThreadEntries(kept), omitted), maxTs, attachmentMessages: kept };
         })(),
         seedTimeoutMs,
       );
@@ -894,7 +898,7 @@ export function createChat(deps: ChatDeps): Chat {
     scope: SessionScope,
     placeholderTs: string,
     watermark: string,
-  ): Promise<{ block: string; fetched: boolean; maxTs: string | undefined }> {
+  ): Promise<{ block: string; fetched: boolean; maxTs: string | undefined; attachmentMessages?: ThreadMessage[] }> {
     const threadTs = scope.replyThreadTs;
     if (scope.scope !== "thread" || threadTs === undefined || threadTs === msg.ts) {
       return { block: "", fetched: true, maxTs: undefined };
@@ -932,6 +936,7 @@ export function createChat(deps: ChatDeps): Chat {
               "before-all",
             ),
             maxTs,
+            attachmentMessages: kept,
           };
         })(),
         seedTimeoutMs,
@@ -1300,7 +1305,7 @@ export function createChat(deps: ChatDeps): Chat {
       const cfg = await getConfig();
       const scope = sessionScopeFor(msg, cfg.dmSessionMode);
       replyThreadTs = scope.replyThreadTs;
-      const text = stripMention(msg.text);
+      const text = stripMention(msg.text) || (msg.files?.length ? "Read the attached files." : "");
       if (!text) return;
       let entry = await getOrCreateSession(cfg, msg.channel, scope);
 
@@ -1334,6 +1339,7 @@ export function createChat(deps: ChatDeps): Chat {
       // `placeholder.ts` is threaded through so buildSeedBlock can exclude
       // the placeholder message itself from the transcript it reads back —
       // see the BLOCKER 1 note on buildSeedBlock.
+      let attachmentMessages: ThreadMessage[] = [];
       let seed = "";
       let seedComplete = false;
       let seedMaxTs: string | undefined;
@@ -1348,6 +1354,7 @@ export function createChat(deps: ChatDeps): Chat {
           return;
         }
         seed = result.block;
+        attachmentMessages = result.attachmentMessages ?? [];
         // A retryable failure (fetch error/timeout) leaves seedPending set;
         // anything else — a delivered block, or nothing to seed — completes.
         seedComplete = !result.retryable;
@@ -1382,12 +1389,21 @@ export function createChat(deps: ChatDeps): Chat {
         claimedDeltaKey = scope.key;
         const result = await buildDeltaBlock(msg, scope, placeholder.ts, entry.seededUpTo);
         delta = result.block;
+        attachmentMessages = result.attachmentMessages ?? [];
         deltaFetchOk = result.fetched;
         deltaMaxTs = result.maxTs;
         if (delta) void ctx.metrics.write("slack.turns.thread_delta", 1).catch(() => {});
       }
 
-      const prompt = buildChatPrompt(cfg.chatPromptPreamble, text, seed || delta);
+      // Downloads happen AFTER the bounded history fetch, never inside its timeout.
+      const attachmentContext = await prepareInboundTurn({
+        current: msg.files ?? [], history: attachmentMessages, agentId: deps.agentId,
+        channel: msg.channel, ts: msg.ts, conversation: scope.key,
+        threadTs: scope.replyThreadTs,
+        prepareFiles: deps.prepareFiles,
+        reading: async () => { await gateway.updateMessage({ channel: placeholder!.channel, ts: placeholder!.ts, text: "_Reading the attached files…_" }); },
+      });
+      const prompt = buildChatPrompt(cfg.chatPromptPreamble, text, (seed || delta) + attachmentContext);
       let { delivered, sendError } = await streamReply(cfg, entry, scope.replyThreadTs, prompt, placeholder);
 
       // Paperclip session registrations are process-local for some agent

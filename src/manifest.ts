@@ -20,6 +20,7 @@ const manifest: PaperclipPluginManifestV1 = {
   author: "XoomCloud",
   categories: ["connector", "automation"],
   capabilities: [
+    "issues.read",
     "issues.create",
     "issue.comments.create",
     "issues.wakeup",
@@ -45,6 +46,15 @@ const manifest: PaperclipPluginManifestV1 = {
   instanceConfigSchema: {
     type: "object",
     properties: {
+      inboundFileRoot: {
+        type: "string", title: "Private inbound file spool",
+        description: "Absolute IT-provisioned directory with agent-UUID children. Service writes; only the owning employee reads. Never use a shared employee-writable directory.",
+        default: DEFAULT_CONFIG.inboundFileRoot,
+      },
+      inboundFileMaxBytes: {
+        type: "integer", title: "Inbound attachment byte limit", minimum: 1, maximum: 10485760,
+        default: DEFAULT_CONFIG.inboundFileMaxBytes,
+      },
       slackBotTokenRef: {
         // The host's secret picker stores a `{ type: "secret_ref", secretId,
         // version }` object, and ctx.secrets.resolve() fails closed on plain

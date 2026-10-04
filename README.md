@@ -1,5 +1,7 @@
 # XoomAI Paperclip Slack Employee Gateway
 
+Inbound file support and replay behavior: [installation and acceptance contract](INBOUND-ATTACHMENTS.md).
+
 A XoomAI fork of `0xCVH/paperclip-plugin-slack-socket` that gives every Paperclip AI employee a native Slack bot identity while keeping Paperclip as the routing source of truth.
 
 ```text

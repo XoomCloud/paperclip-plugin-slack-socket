@@ -40,6 +40,11 @@ export function createGatewayProxy(
   };
 
   return {
+    async downloadFile(file, maxBytes) {
+      const gateway = getGateway();
+      if (!gateway?.downloadFile) throw new Error("Slack file gateway unavailable");
+      return gateway.downloadFile(file, maxBytes);
+    },
     async start() {
       const gateway = getGateway();
       if (!gateway) {

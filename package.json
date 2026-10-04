@@ -1,6 +1,6 @@
 {
   "name": "@xoomcloud/paperclip-plugin-slack-socket",
-  "version": "0.13.0-xoomai.1",
+  "version": "0.14.0-xoomai.1",
   "type": "module",
   "description": "XoomAI multi-employee Slack Socket Mode gateway for Paperclip with automatic identity routing.",
   "main": "./dist/index.js",
