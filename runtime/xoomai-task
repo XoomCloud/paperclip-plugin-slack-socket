@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+"""Use the current employee's Paperclip runtime credential, never an owner token."""
+import argparse,json,os,urllib.request,urllib.parse,urllib.error,fcntl,pathlib,re
+p=argparse.ArgumentParser()
+sub=p.add_subparsers(dest='action',required=True)
+e=sub.add_parser('ensure');e.add_argument('--conversation',required=True);e.add_argument('--title',required=True);e.add_argument('--description',required=True)
+e.add_argument('--new',action='store_true',help='Start a different deliverable in this conversation')
+c=sub.add_parser('comment');c.add_argument('issue');c.add_argument('body')
+s=sub.add_parser('status');s.add_argument('issue');s.add_argument('status',choices=['todo','in_progress','blocked','in_review','done','cancelled']);s.add_argument('--comment',required=True)
+s.add_argument('--blocked-action',help='Action this agent owns; for a human blocker create a pending interaction instead')
+a=p.parse_args()
+if a.action=="ensure" and not re.fullmatch(r"bot:U[A-Z0-9]+:session:[CDG][A-Z0-9]+:(?:[0-9]+\.[0-9]+|main)",a.conversation):p.error("Invalid authoritative conversation reference")
+base=os.environ['PAPERCLIP_API_URL'].rstrip('/')
+if not base.endswith('/api'): base+='/api'
+company=os.environ['PAPERCLIP_COMPANY_ID'];agent=os.environ['PAPERCLIP_AGENT_ID']
+def api(path,method='GET',body=None):
+    headers={'Authorization':'Bearer '+os.environ['PAPERCLIP_API_KEY'],'Content-Type':'application/json'}
+    if os.environ.get('PAPERCLIP_RUN_ID'): headers['X-Paperclip-Run-Id']=os.environ['PAPERCLIP_RUN_ID']
+    r=urllib.request.Request(base+path,headers=headers,method=method,data=None if body is None else json.dumps(body).encode())
+    try:
+        with urllib.request.urlopen(r,timeout=45) as out:return json.load(out)
+    except urllib.error.HTTPError as ex:
+        raise SystemExit(f'Paperclip request failed ({ex.code}); inspect redacted server diagnostics')
+if a.action in ("comment","status"):
+    issue=api("/issues/"+a.issue)
+    if issue.get("companyId")!=company or issue.get("assigneeAgentId")!=agent:raise SystemExit("Task is not assigned to this employee")
+if a.action=='comment':
+    r=api('/issues/'+a.issue+'/comments','POST',{'body':a.body})
+    print(json.dumps({'commentId':r.get('id'),'issueId':a.issue}));raise SystemExit
+if a.action=='status':
+    body={'status':a.status,'comment':a.comment}
+    if a.status=='blocked' and a.blocked_action:body['unblockDescriptor']={'owner':{'agentId':agent},'action':a.blocked_action[:2000]}
+    r=api('/issues/'+a.issue,'PATCH',body)
+    print(json.dumps({k:r.get(k) for k in ['id','identifier','status']}));raise SystemExit
+marker='XoomAI conversation: '+a.conversation
+lock=pathlib.Path(os.environ['XOOMAI_WORKSPACE'])/'.xoomai-task.lock'
+with lock.open('a') as f:
+    fcntl.flock(f,fcntl.LOCK_EX)
+    mapping_path=lock.parent/'.xoomai-task-map.json'
+    mapping=json.loads(mapping_path.read_text()) if mapping_path.exists() else {}
+    if not a.new and a.conversation in mapping:
+        cached=api('/issues/'+mapping[a.conversation])
+        if cached.get('companyId')!=company or cached.get('assigneeAgentId')!=agent:raise SystemExit('Cached task ownership changed; reconcile before continuing')
+        print(json.dumps({'created':False,'id':cached['id'],'identifier':cached.get('identifier'),'status':cached['status']}));raise SystemExit
+    rows=api('/companies/'+company+'/issues?assigneeAgentId='+agent)
+    if isinstance(rows,dict): rows=rows.get('issues',rows.get('data',[]))
+    existing=[] if a.new else [r for r in rows if marker in (r.get('description') or '').splitlines()]
+    existing.sort(key=lambda r:(r.get('status') in ['done','cancelled'], -(int(r.get('issueNumber') or 0))))
+    if existing:r=existing[0];created=False
+    else:
+        r=api('/companies/'+company+'/issues','POST',{'title':a.title,'description':a.description+'\n\n'+marker,'assigneeAgentId':agent,'status':'todo','priority':'medium'});created=True
+    mapping[a.conversation]=r['id']
+    staged=mapping_path.with_suffix('.tmp');staged.write_text(json.dumps(mapping));staged.chmod(0o600);staged.replace(mapping_path)
+    print(json.dumps({'created':created,'id':r['id'],'identifier':r.get('identifier'),'status':r['status'],'url':base.removesuffix('/api')+'/issues/'+r['identifier']}))

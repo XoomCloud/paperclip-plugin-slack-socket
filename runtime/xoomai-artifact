@@ -1,0 +1,48 @@
+#!/usr/bin/python3
+"""Attach a generated file to its task and wait for native Slack delivery."""
+import argparse,json,os,pathlib,urllib.request,urllib.error,uuid,mimetypes,time
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('--file',required=True);p.add_argument('--issue',required=True);a=p.parse_args()
+file=pathlib.Path(a.file).resolve()
+workspace=pathlib.Path(os.environ['XOOMAI_WORKSPACE']).resolve()
+if not file.is_relative_to(workspace) or not file.is_file() or file.stat().st_uid!=os.getuid():p.error("File must be owned by this employee beneath its workspace")
+if file.stat().st_size>50*1024*1024:p.error('File exceeds 50 MiB delivery limit')
+key=os.environ['PAPERCLIP_API_KEY'];base=os.environ['PAPERCLIP_API_URL'].rstrip('/')
+if not base.endswith('/api'):base+='/api'
+def request(url,data=None,content_type='application/json'):
+ headers={'Authorization':'Bearer '+key,'Content-Type':content_type}
+ if os.environ.get('PAPERCLIP_RUN_ID'):headers['X-Paperclip-Run-Id']=os.environ['PAPERCLIP_RUN_ID']
+ try:
+  with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers),timeout=90) as r:return json.load(r)
+ except urllib.error.HTTPError as e:raise SystemExit('Artifact request failed (%s): %s'%(e.code,'Inspect redacted server diagnostics'))
+issue=request(base+'/issues/'+a.issue)
+if issue.get('companyId')!=os.environ['PAPERCLIP_COMPANY_ID'] or issue.get('assigneeAgentId')!=os.environ['PAPERCLIP_AGENT_ID']:p.error("Task does not belong to this employee")
+# Local persistent idempotency record prevents re-upload after timeout/restart.
+import hashlib,fcntl
+recordroot=workspace/'.xoomai-artifacts';recordroot.mkdir(exist_ok=True,mode=0o700)
+fingerprint=hashlib.sha256((a.issue+str(file)+hashlib.sha256(file.read_bytes()).hexdigest()).encode()).hexdigest()
+recordfile=recordroot/fingerprint
+lock=(recordroot/(fingerprint+'.lock')).open('a');fcntl.flock(lock,fcntl.LOCK_EX)
+if recordfile.exists():
+    old=json.loads(recordfile.read_text())
+    if not old.get('attachmentId'):raise SystemExit("Prior attachment creation is uncertain; reconcile the task attachments before retrying")
+    attachment=old
+else:attachment=None
+mime=mimetypes.guess_type(file.name)[0] or 'application/octet-stream';boundary='xoomai'+uuid.uuid4().hex
+filename=file.name.replace('"','_').replace('\r','_').replace('\n','_')
+payload=('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="'+filename+'"\r\nContent-Type: '+mime+'\r\n\r\n').encode()+file.read_bytes()+('\r\n--'+boundary+'--\r\n').encode()
+if attachment is None:
+ recordfile.write_text(json.dumps({'status':'creating','issueId':a.issue}));recordfile.chmod(0o600)
+ attachment=request(base+'/companies/'+os.environ['PAPERCLIP_COMPANY_ID']+'/issues/'+a.issue+'/attachments',payload,'multipart/form-data; boundary='+boundary)
+ recordfile.write_text(json.dumps({'attachmentId':attachment['id']}))
+else:attachment={'id':attachment['attachmentId']}
+print(json.dumps({'attachmentId':attachment['id'],'status':'awaiting_slack_upload'}),flush=True)
+for attempt in range(30):
+ try:r=request('http://127.0.0.1:3192/status?attachmentId='+attachment['id'])
+ except (urllib.error.URLError,TimeoutError,ConnectionError):
+  r={'status':'pending','error':'Delivery status temporarily unavailable; the existing attachment will be retried.'}
+  time.sleep(5)
+  continue
+ if r['status']=='delivered':print(json.dumps({'attachmentId':attachment['id'],'slackDelivered':True,'slackFileId':r['slackFileId'],'slackUrl':r.get('slackUrl')}));raise SystemExit
+ if r['status']=='uncertain':raise SystemExit('Slack confirmation is uncertain; do not upload again. '+r.get('error',''))
+ time.sleep(5)
+raise SystemExit('File retained on the task; Slack delivery is still pending and the service will retry. Do not re-upload or claim delivery. '+r.get('error',''))

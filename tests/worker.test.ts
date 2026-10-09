@@ -7,10 +7,10 @@ import { FakeGateway, makeCtx, TEST_CONFIG } from "./helpers.js";
 // network call — it constructs a WebClient and calls auth.test() /
 // apps.connections.open() directly.
 vi.mock("@slack/web-api", () => ({
-  WebClient: vi.fn().mockImplementation(() => ({
+  WebClient: vi.fn().mockImplementation(function () { return {
     auth: { test: vi.fn().mockResolvedValue({ ok: true }) },
     apps: { connections: { open: vi.fn().mockResolvedValue({ ok: true }) } },
-  })),
+  }; }),
 }));
 
 // Stub BoltGateway so the real, host-facing `onConfigChanged` hook can be

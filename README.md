@@ -2,6 +2,8 @@
 
 Inbound file support and replay behavior: [installation and acceptance contract](INBOUND-ATTACHMENTS.md).
 
+Runtime companion: [actual source, installation/adoption and rollback instructions](runtime/README.md). Version 0.1.0 is a review candidate pinned to Paperclip 2026.916.1; clean-VM/Linux and live Slack/provider acceptance are not yet claimed.
+
 A XoomAI fork of `0xCVH/paperclip-plugin-slack-socket` that gives every Paperclip AI employee a native Slack bot identity while keeping Paperclip as the routing source of truth.
 
 ```text
