@@ -34,5 +34,12 @@ jobs:
       - name: Run the test suite
         run: npm test
 
+      - name: Verify runtime companion checksums and portable tests
+        run: |
+          cd runtime
+          sha256sum -c SHA256SUMS
+          node --test runtime.node-test.mjs
+          python3 runtime_test.py
+
       - name: Audit dependencies for high-severity advisories
         run: npm audit --audit-level=high

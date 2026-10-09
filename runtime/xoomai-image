@@ -1,0 +1,35 @@
+#!/usr/bin/python3
+"""Shared OpenRouter-backed image tool for Codex and Claude employees."""
+import argparse,base64,json,os,pathlib,urllib.request,urllib.error,uuid,subprocess
+p=argparse.ArgumentParser(description=__doc__)
+p.add_argument('--check',action='store_true')
+p.add_argument('--prompt')
+p.add_argument('--output',help='New image file path; existing files are never overwritten')
+p.add_argument('--issue',help='Paperclip task UUID; attach the image and post the result to its Slack thread')
+a=p.parse_args()
+key=os.environ.get('PAPERCLIP_API_KEY')
+if not key:p.error('Run from your Paperclip employee runtime; PAPERCLIP_API_KEY is required')
+if not a.check and (not a.prompt or not a.issue):p.error('--prompt and --issue are required')
+def request(url,data,content_type='application/json'):
+    headers={'Authorization':'Bearer '+key,'Content-Type':content_type}
+    if os.environ.get('PAPERCLIP_RUN_ID'):headers['X-Paperclip-Run-Id']=os.environ['PAPERCLIP_RUN_ID']
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers),timeout=330) as r:return json.load(r)
+    except urllib.error.HTTPError as e:raise SystemExit('Image tool request failed (%s): %s'%(e.code,'Inspect redacted service diagnostics'))
+target=None
+if not a.check:
+    target=pathlib.Path(a.output or 'generated-image-'+uuid.uuid4().hex[:10]+'.png').absolute()
+    if not target.resolve().is_relative_to(pathlib.Path(os.environ['XOOMAI_WORKSPACE']).resolve()):p.error('Output must be in the employee workspace')
+    if target.exists():p.error('Output already exists; choose a new filename')
+    if not target.parent.is_dir():p.error('Output directory must already exist')
+r=request('http://127.0.0.1:3191/'+('check' if a.check else 'generate'),json.dumps({'prompt':a.prompt}).encode())
+if a.check:print(json.dumps(r));raise SystemExit
+data=base64.b64decode(r.pop('imageBase64'),validate=True)
+mime=r['mimeType']
+ext={'image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp'}[mime]
+if target.suffix.lower()!=ext:target=target.with_suffix(ext)
+with target.open('xb') as f:f.write(data)
+r['path']=str(target)
+print(json.dumps(r),flush=True)
+if a.issue:
+    subprocess.run(['/usr/local/bin/xoomai-artifact','--file',str(target),'--issue',a.issue],check=True)

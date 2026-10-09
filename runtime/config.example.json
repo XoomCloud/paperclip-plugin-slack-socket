@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "companyId": "<EXISTING_PAPERCLIP_COMPANY_UUID>",
+  "baseUrl": "https://<CLIENT_PRIVATE_TAILSCALE_HOST>",
+  "slackTeamId": "<SLACK_WORKSPACE_ID>",
+  "appRoot": "/srv/xoomai/paperclip-app",
+  "pluginRoot": "/srv/xoomai/plugins/paperclip-plugin-slack-socket",
+  "paperclipHome": "/srv/xoomai/paperclip",
+  "stateRoot": "/var/lib/xoomai-runtime",
+  "serviceEnvironmentFile": "/home/paperclip/paperclip.env",
+  "nodeBinary": "/usr/bin/node",
+  "slackBotTokenRefs": [
+    "<PAPERCLIP_ENCRYPTED_SLACK_BOT_SECRET_REFERENCE>"
+  ],
+  "paperclipApiKeyRef": "<COMPANY_SCOPED_MANAGED_SERVICE_SECRET_REFERENCE>",
+  "employees": [
+    {
+      "key": "<SELECTED_EMPLOYEE_KEY>",
+      "agentId": "<EXISTING_EMPLOYEE_UUID>",
+      "linuxUser": "<SELECTED_LINUX_USER>",
+      "engine": "codex",
+      "workspace": "/srv/xoomai/agents/<SELECTED_EMPLOYEE_KEY>/workspace",
+      "nativeHistory": "/srv/xoomai/agents/<SELECTED_EMPLOYEE_KEY>/native-history",
+      "binary": "/usr/local/bin/codex",
+      "enabled": true
+    }
+  ],
+  "images": {
+    "enabled": false,
+    "model": "google/gemini-3.1-flash-image",
+    "secretRef": "",
+    "monthlyCapUsd": 0,
+    "maxRequestCostUsd": 0
+  }
+}

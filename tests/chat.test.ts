@@ -49,6 +49,13 @@ const dm = (text: string, ts: string, threadTs?: string) => ({
 });
 
 describe("chat", () => {
+  it("supplies the authoritative per-bot conversation reference even with an empty preamble", async () => {
+    const {ctx,chat}=setup({chatPromptPreamble:""},{sessionKeyPrefix:"bot:U123:"});
+    await chat.handleMessage(dm("Please prepare a report", "100.1"));
+    const prompt=(ctx.agents.sessions.sendMessage as any).mock.calls[0][2].prompt;
+    expect(prompt).toContain("Conversation reference: bot:U123:session:D1:");
+    expect(prompt.indexOf("Conversation reference:")).toBeLessThan(prompt.indexOf("Slack message:"));
+  });
   it("creates a session for a new DM thread and posts the agent reply (dmSessionMode: thread)", async () => {
     const { ctx, gateway, chat, stateStore } = setup({ dmSessionMode: "thread" });
     await chat.handleMessage(dm("hi", "100.1"));

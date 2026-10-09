@@ -1,6 +1,6 @@
 {
   "name": "@xoomcloud/paperclip-plugin-slack-socket",
-  "version": "0.14.0-xoomai.1",
+  "version": "0.15.0-xoomai.1",
   "type": "module",
   "description": "XoomAI multi-employee Slack Socket Mode gateway for Paperclip with automatic identity routing.",
   "main": "./dist/index.js",
@@ -8,6 +8,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "test:runtime": "node --test runtime/runtime.node-test.mjs && python runtime/runtime_test.py",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
   "files": [
     "dist/",
     "ops/",
+    "runtime/",
     "slack-app-manifest.json",
     "slack-app-manifest.chat-only.json"
   ],

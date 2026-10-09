@@ -1403,7 +1403,9 @@ export function createChat(deps: ChatDeps): Chat {
         prepareFiles: deps.prepareFiles,
         reading: async () => { await gateway.updateMessage({ channel: placeholder!.channel, ts: placeholder!.ts, text: "_Reading the attached files…_" }); },
       });
-      const prompt = buildChatPrompt(cfg.chatPromptPreamble, text, (seed || delta) + attachmentContext);
+      // Trusted transport identity stays outside quoted, untrusted history.
+      const routedPreamble = sessionKeyPrefix ? `${cfg.chatPromptPreamble}\n\nConversation reference: ${scope.key}` : cfg.chatPromptPreamble;
+      const prompt = buildChatPrompt(routedPreamble, text, (seed || delta) + attachmentContext);
       let { delivered, sendError } = await streamReply(cfg, entry, scope.replyThreadTs, prompt, placeholder);
 
       // Paperclip session registrations are process-local for some agent
