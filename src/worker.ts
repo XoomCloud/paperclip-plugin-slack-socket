@@ -10,6 +10,7 @@ import {
   type PluginApiResponse,
 } from "@paperclipai/plugin-sdk";
 import { isUserAllowed } from "./access.js";
+import { decisionSurfaceAllowed, isDecisionChannel } from "./approval-channel-policy.js";
 import {
   buildAgentRegistry,
   discoverAgentRegistry,
@@ -201,6 +202,9 @@ async function routeChat(
   surface: "mention" | "message",
   message: InboundMessage,
 ): Promise<void> {
+  // Decision-channel message replies may answer a pending human question,
+  // but can never fall through into a provider chat/session.
+  if (isDecisionChannel(runtime.config, message.channel)) return;
   if (!(await checkAccess(ctx, message.user, surface, runtime.config, runtime.key))) return;
   if (!eventDeduper.shouldProcess(`${runtime.key}:${surface}:${message.channel}:${message.ts}`)) return;
 
@@ -343,6 +347,7 @@ async function handleScopedApiRequest(
       ![reaction.user, reaction.channel, reaction.messageTs, reaction.reaction]
         .every((value) => typeof value === "string")
     ) return { status: 400, body: { error: "Invalid Slack reaction payload" } };
+    if (!decisionSurfaceAllowed(runtime.config, botKey, reaction.channel, "reaction")) return { status: 403 };
     if (!(await checkAccess(ctx, reaction.user, "reaction", runtime.config, botKey))) {
       return { status: 403, body: { error: "Slack user is not allowed" } };
     }
@@ -361,6 +366,7 @@ async function handleScopedApiRequest(
       ![action.user, action.userName, action.channel, action.messageTs, action.actionId, action.value]
         .every((value) => typeof value === "string")
     ) return { status: 400, body: { error: "Invalid Slack action payload" } };
+    if (!decisionSurfaceAllowed(runtime.config, botKey, action.channel, "action", action.actionId)) return { status: 403 };
     if (!(await checkAccess(ctx, action.user, "action", runtime.config, botKey))) {
       return { status: 403, body: { error: "Slack user is not allowed" } };
     }
@@ -386,6 +392,7 @@ async function handleScopedApiRequest(
     return { status: 404, body: { error: "Unknown Slack bot key" } };
   }
   const { message, surface } = request;
+  if (!decisionSurfaceAllowed(runtime.config, botKey, message.channel, surface)) return { status: 403 };
   if (surface === "message") {
     if (!(await checkAccess(ctx, message.user, surface, runtime.config, botKey))) {
       return { status: 403, body: { error: "Slack user is not allowed" } };
@@ -393,6 +400,7 @@ async function handleScopedApiRequest(
     const { askHuman } = ensureCoreModules(ctx);
     if (await askHuman.tryHandleAnswer(message)) return { status: 204 };
   }
+  if (isDecisionChannel(runtime.config, message.channel)) return { status: 403 };
   await routeChat(ctx, runtime, surface, message);
   return { status: 204 };
 }
@@ -1094,6 +1102,7 @@ export async function applyConfig(
     await routeChat(ctx, primaryRuntime, "message", msg);
   });
   gateway.onReaction(async (reaction) => {
+    if (!decisionSurfaceAllowed(cfg, "primary", reaction.channel, "reaction")) return;
     if (!(await checkAccess(ctx, reaction.user, "reaction"))) return;
     if (prepared.scopedBridge) {
       await forwardReactionThroughScopedRoute(cfg, "primary", reaction);
@@ -1102,6 +1111,7 @@ export async function applyConfig(
     await askHuman.handleReaction(reaction);
   });
   gateway.onAction(/^approval_(approve|reject)$/, async (action) => {
+    if (!decisionSurfaceAllowed(cfg, "primary", action.channel, "action", action.actionId)) return;
     if (!(await checkAccess(ctx, action.user, "action"))) return;
     if (prepared.scopedBridge) {
       await forwardActionThroughScopedRoute(cfg, "primary", action);
@@ -1110,6 +1120,7 @@ export async function applyConfig(
     await approvals.handleAction(action);
   });
   gateway.onAction(/^question_answer_[0-4]$/, async (action) => {
+    if (!decisionSurfaceAllowed(cfg, "primary", action.channel, "action", action.actionId)) return;
     if (!(await checkAccess(ctx, action.user, "action"))) return;
     if (prepared.scopedBridge) {
       await forwardActionThroughScopedRoute(cfg, "primary", action);
@@ -1118,6 +1129,7 @@ export async function applyConfig(
     await askHuman.handleAction(action);
   });
   gateway.onCommand(SLASH_COMMAND, async (cmd) => {
+    if (!decisionSurfaceAllowed(cfg, "primary", cmd.channel, "command")) return;
     if (!(await checkAccess(ctx, cmd.user, "command"))) return;
     await commands.handleCommand(cmd);
   });
@@ -1159,6 +1171,7 @@ export async function applyConfig(
         await routeChat(ctx, runtime, "mention", msg);
       });
       botGateway.onMessage(async (msg) => {
+        if (!decisionSurfaceAllowed(botCfg, botKey, msg.channel, "message")) return;
         if (prepared.scopedBridge) {
           await forwardChatThroughScopedRoute(botCfg, botKey, "message", msg);
           return;
@@ -1167,6 +1180,7 @@ export async function applyConfig(
         await routeChat(ctx, runtime, "message", msg);
       });
       botGateway.onAction(/^(approval_(approve|reject)|question_answer_[0-4])$/, async (action) => {
+        if (!decisionSurfaceAllowed(botCfg, botKey, action.channel, "action", action.actionId)) return;
         if (!(await checkAccess(ctx, action.user, "action", botCfg, botKey))) return;
         if (prepared.scopedBridge) {
           await forwardActionThroughScopedRoute(botCfg, botKey, action);
@@ -1176,6 +1190,7 @@ export async function applyConfig(
         else await askHuman.handleAction(action);
       });
       botGateway.onReaction(async (reaction) => {
+        if (!decisionSurfaceAllowed(botCfg, botKey, reaction.channel, "reaction")) return;
         if (!(await checkAccess(ctx, reaction.user, "reaction", botCfg, botKey))) return;
         if (prepared.scopedBridge) {
           await forwardReactionThroughScopedRoute(botCfg, botKey, reaction);

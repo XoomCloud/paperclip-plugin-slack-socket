@@ -123,6 +123,40 @@ afterEach(() => {
 });
 
 describe("applyConfig", () => {
+  it("accepts a linked authorised private approval via the scoped callback without opening agent chat", async () => {
+    const { default: plugin, applyConfig } = await loadWorker();
+    const { ctx, stateStore } = makeCtx();
+    const gateway = new FakeGateway();
+    await plugin.definition.setup(ctx);
+    await applyConfig(ctx, cfg({ approvalsChannelId: "CPRIVATE", humanDecisionSlackUserIds: ["UOWNER"] }), () => gateway);
+    stateStore.set(STATE_KEYS.approvalMessage("approval-private"), { channel: "CPRIVATE", ts: "300.1" });
+    (ctx.http.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ status: 200, json: async () => ({ companyId: "co-1", status: "pending" }) }));
+    const invoke = (body: unknown) => plugin.definition.onApiRequest!({ routeKey: "slack-inbound", method: "POST", path: "/slack-inbound", params: {}, query: {}, body, actor: { actorType: "user", actorId: "board", userId: "board" }, companyId: "co-1", headers: {} });
+    const action = { actionId: "approval_reject", value: "approval-private", user: "UOWNER", userName: "Owner", channel: "CPRIVATE", messageTs: "300.1" };
+    const response = await invoke({ companyId: "co-1", botKey: "primary", surface: "action", action });
+    expect(response.status).toBe(204);
+    expect((ctx.http.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((call) => (call[1] as { method?: string })?.method === "POST")).toHaveLength(1);
+    expect(gateway.updates[0]!.text).toContain("Rejected");
+    for (const surface of ["mention", "message"]) {
+      const result = await invoke({ companyId: "co-1", botKey: "primary", surface, message: { channel: "CPRIVATE", channelType: "channel", user: "UOWNER", text: "start agent work", ts: (Date.now() / 1000).toFixed(6) } });
+      expect(result.status).toBe(403);
+    }
+    expect(ctx.agents.sessions.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses unauthorised or forged private approval callbacks without a decision", async () => {
+    const { default: plugin, applyConfig } = await loadWorker();
+    const { ctx, stateStore } = makeCtx();
+    await plugin.definition.setup(ctx);
+    await applyConfig(ctx, cfg({ approvalsChannelId: "CPRIVATE", humanDecisionSlackUserIds: ["UOWNER"] }), () => new FakeGateway());
+    stateStore.set(STATE_KEYS.approvalMessage("approval-private"), { channel: "CPRIVATE", ts: "300.1" });
+    for (const [user, messageTs] of [["UOTHER", "300.1"], ["UOWNER", "forged-card"]]) {
+      await plugin.definition.onApiRequest!({ routeKey: "slack-inbound", method: "POST", path: "/slack-inbound", params: {}, query: {}, body: { companyId: "co-1", botKey: "primary", surface: "action", action: { actionId: "approval_approve", value: "approval-private", user, userName: "Fixture", channel: "CPRIVATE", messageTs } }, actor: { actorType: "user", actorId: "board", userId: "board" }, companyId: "co-1", headers: {} });
+    }
+    expect(ctx.http.fetch).not.toHaveBeenCalled();
+    expect(ctx.agents.sessions.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("stays degraded and does not start the gateway when required fields are missing", async () => {
     const { applyConfig } = await loadWorker();
     const { ctx } = makeCtx();
