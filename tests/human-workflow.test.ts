@@ -5,7 +5,7 @@ import { STATE_KEYS } from "../src/constants.js";
 import { parseTaskOrigin } from "../src/human-origin.js";
 import { FakeGateway, makeCtx, TEST_CONFIG } from "./helpers.js";
 
-function setup() {
+function setup(configOverrides = {}) {
   const bundle = makeCtx();
   const gateway = new FakeGateway();
   const employee = new FakeGateway();
@@ -15,6 +15,7 @@ function setup() {
     allowedSlackUserIds: ["UOWNER"],
     humanDecisionSlackUserIds: ["UOWNER"],
     approvalsChannelId: "CMANAGEMENT",
+    ...configOverrides,
   };
   const origin = "bot:UBOT1:session:CEMPLOYEE:100.1";
   (bundle.ctx.issues as any).get = vi.fn().mockResolvedValue({
@@ -153,14 +154,46 @@ describe("Slack human-decision workflow", () => {
     );
   });
 
-  it("routes a task-linked approval through the employee bot", async () => {
-    const fixture = setup();
+  it("keeps origin-thread approval behavior when no private destination is configured", async () => {
+    const fixture = setup({ approvalsChannelId: "" });
     await fixture.emitEvent("approval.created", {
       entityId: "approval-1",
       payload: { title: "Fixture", issueIds: ["issue-1"] },
     });
     expect(fixture.employee.posts[0]).toMatchObject({ channel: "CEMPLOYEE", threadTs: "100.1" });
     expect(fixture.gateway.posts).toHaveLength(0);
+  });
+
+  it("private management overrides the task origin and retires stale employee-bot ownership", async () => {
+    const fixture = setup();
+    fixture.stateStore.set(STATE_KEYS.approvalBot("approval-1"), "UBOT1");
+    await fixture.emitEvent("approval.created", {
+      entityId: "approval-1", payload: { title: "Fixture", issueIds: ["issue-1"] },
+    });
+    expect(fixture.gateway.posts[0]).toMatchObject({ channel: "CMANAGEMENT" });
+    expect(fixture.gateway.posts[0]!.threadTs).toBeUndefined();
+    expect(fixture.employee.posts).toHaveLength(0);
+    expect(fixture.ctx.issues.get).not.toHaveBeenCalled();
+    expect(fixture.stateStore.has(STATE_KEYS.approvalBot("approval-1"))).toBe(false);
+    await fixture.emitEvent("approval.decided", { entityId: "approval-1", payload: { status: "rejected" } });
+    expect(fixture.gateway.updates[0]!.channel).toBe("CMANAGEMENT");
+    expect(fixture.employee.updates).toHaveLength(0);
+  });
+
+  it("empty private/origin destination falls back to the configured default channel", async () => {
+    const fixture = setup({ approvalsChannelId: "", defaultChannelId: "CDEFAULT" });
+    await fixture.emitEvent("approval.created", { entityId: "approval-1", payload: { title: "Fixture" } });
+    // Canonical enrichment supplies an issue, so remove its validated origin.
+    fixture.stateStore.delete("bot:UBOT1:session:CEMPLOYEE:100.1");
+    await fixture.emitEvent("approval.created", { entityId: "approval-2", payload: { title: "Fixture" } });
+    expect(fixture.gateway.posts.at(-1)!.channel).toBe("CDEFAULT");
+  });
+
+  it("rejects an otherwise linked origin card when a private destination is configured", async () => {
+    const fixture = setup();
+    fixture.stateStore.set(STATE_KEYS.approvalMessage("approval-1"), { channel: "CEMPLOYEE", ts: "123.1" });
+    await fixture.approvals.handleAction({ actionId: "approval_reject", value: "approval-1", user: "UOWNER", userName: "Owner", channel: "CEMPLOYEE", messageTs: "123.1" });
+    expect((fixture.ctx.http.fetch as any).mock.calls.filter((call: any[]) => call[1]?.method === "POST")).toHaveLength(0);
   });
 
   it("rejects unlinked or unauthorized approvals and accepts an exact pending card", async () => {
@@ -170,7 +203,7 @@ describe("Slack human-decision workflow", () => {
       value: "approval-1",
       user: "UOWNER",
       userName: "Owner",
-      channel: "CEMPLOYEE",
+      channel: "CMANAGEMENT",
       messageTs: "123.1",
     };
     await fixture.approvals.handleAction(action);
@@ -179,11 +212,11 @@ describe("Slack human-decision workflow", () => {
       entityId: "approval-1",
       payload: { title: "Fixture", issueIds: ["issue-1"] },
     });
-    const messageTs = fixture.employee.posts[0]!.ts;
+    const messageTs = fixture.gateway.posts[0]!.ts;
     await fixture.approvals.handleAction({ ...action, user: "UOTHER", messageTs });
     expect((fixture.ctx.http.fetch as any).mock.calls.filter((call: any[]) => call[1]?.method === "POST")).toHaveLength(0);
     await fixture.approvals.handleAction({ ...action, messageTs });
     expect((fixture.ctx.http.fetch as any).mock.calls.filter((call: any[]) => call[1]?.method === "POST")).toHaveLength(1);
-    expect(fixture.employee.updates[0]!.text).toContain("Approved");
+    expect(fixture.gateway.updates[0]!.text).toContain("Approved");
   });
 });

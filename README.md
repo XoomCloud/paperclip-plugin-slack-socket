@@ -139,7 +139,27 @@ If two employees expose the same normalized alias, neither is selected. Rename o
 - Bot credentials are Paperclip secret references; raw tokens are not stored in plugin config.
 - One worker binds to one Paperclip company for its lifetime and rejects cross-company config changes.
 
-## Development
+## Private human-decision channel (0.16.0-xoomai.1)
+
+Set `approvalsChannelId` to the verified private management channel. It takes
+precedence over a task's Slack origin: approval cards are posted as root messages
+by the primary bot, and decisions made in Slack or Paperclip update that same
+card. Empty `approvalsChannelId` retains origin-thread routing, with
+`defaultChannelId` as the final fallback.
+
+The configured decision channel is not an employee chat surface. Only the
+primary bot's exact approval/question callbacks and pending human-question
+answers/reactions are admitted; ordinary messages, mentions, slash commands and
+additional-bot callbacks cannot start provider work there. The existing exact
+card, company, pending-status and approved-human checks remain mandatory.
+
+These are client-neutral fixes ported from a qualified deployment, not its
+employee bindings, credentials or other migration patches. Validate private
+membership and a synthetic approve/reject flow on each installation. This
+release does not add a transactional approval outbox, durable inbound queue or
+model-generated thread titles, and does not upgrade customer servers itself.
+
+## Development commands
 
 ```bash
 npm ci

@@ -80,16 +80,22 @@ export function createApprovals(deps: ApprovalDeps): Approvals {
       const issueIds = Array.isArray(payload.issueIds)
         ? payload.issueIds.filter((value): value is string => typeof value === "string")
         : [];
-      const origin = issueIds.length === 1
+      const origin = !cfg.approvalsChannelId && issueIds.length === 1
         ? await humanOrigin(ctx, companyId, issueIds[0]!, deps)
         : null;
-      const channel = origin?.channel ?? cfg.approvalsChannelId ?? cfg.defaultChannelId;
+      // The configured private decision channel overrides a broader task
+      // origin. Empty settings still retain the historical origin/default path.
+      const channel = cfg.approvalsChannelId || origin?.channel || cfg.defaultChannelId;
       if (!channel) return;
-      const selectedGateway = origin?.gateway ?? gateway;
-      if (origin) await ctx.state.set(stateScope(STATE_KEYS.approvalBot(approvalId)), origin.bot);
+      const selectedGateway = cfg.approvalsChannelId ? gateway : origin?.gateway ?? gateway;
+      if (origin && !cfg.approvalsChannelId) {
+        await ctx.state.set(stateScope(STATE_KEYS.approvalBot(approvalId)), origin.bot);
+      } else {
+        await ctx.state.delete(stateScope(STATE_KEYS.approvalBot(approvalId)));
+      }
       const posted = await selectedGateway.postMessage({
         channel,
-        threadTs: origin?.threadTs,
+        threadTs: cfg.approvalsChannelId ? undefined : origin?.threadTs,
         ...formatApprovalCreated(approvalId, payload, cfg.paperclipBaseUrl),
       });
       await ctx.metrics.write("slack.notifications.sent", 1, { type: "approval_created" }).catch(() => {});
@@ -260,6 +266,8 @@ export function createApprovals(deps: ApprovalDeps): Approvals {
   return {
     async handleAction(action) {
       const cfg = await getConfig();
+      if (action.actionId !== ACTION_IDS.approvalApprove && action.actionId !== ACTION_IDS.approvalReject) return;
+      if (cfg.approvalsChannelId && action.channel !== cfg.approvalsChannelId) return;
       const approvalId = action.value;
       const decision = action.actionId === ACTION_IDS.approvalApprove ? "approve" : "reject";
 
